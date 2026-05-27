@@ -31,7 +31,11 @@ include(TpmCompilerFlags)
 # ── Upstream Topo packages ────────────────────────────
 # topo-core exports Platform / Parser / Sema / Transform under the
 # `topo::core::` namespace via its TopoCoreTargets export set.
-find_package(topo-core CONFIG REQUIRED)
+# Guarded so a meta-build that already populated topo-core targets (e.g.
+# via add_subdirectory) does not redundantly find_package.
+if(NOT TARGET topo::core::TopoPlatform)
+    find_package(topo-core CONFIG REQUIRED)
+endif()
 
 # ── Third-party dependencies ──────────────────────────
 # tomlplusplus — header-only TOML parser (manifests, lockfiles, migration
@@ -42,11 +46,13 @@ find_path(TOMLPLUSPLUS_INCLUDE_DIR toml++/toml.hpp REQUIRED)
 # picosha2 / semver are vendored under third_party/ as header-only INTERFACE
 # libraries — see THIRD-PARTY.md for license attribution.
 add_library(tpm_picosha2 INTERFACE)
+add_library(topo::tpm::tpm_picosha2 ALIAS tpm_picosha2)
 target_include_directories(tpm_picosha2 INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/picosha2>
 )
 
 add_library(tpm_semver INTERFACE)
+add_library(topo::tpm::tpm_semver ALIAS tpm_semver)
 target_include_directories(tpm_semver INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/semver>
 )
@@ -104,7 +110,7 @@ tpm_set_compiler_flags(tpm)
 # `option()` so consumers building topo-tpm as a dependency
 # (e.g. downstream packages doing `add_subdirectory`) can opt out.
 option(TOPO_TPM_BUILD_TESTS "Build topo-tpm tests" ON)
-if(TOPO_TPM_BUILD_TESTS AND PROJECT_IS_TOP_LEVEL)
+if(TOPO_TPM_BUILD_TESTS AND (PROJECT_IS_TOP_LEVEL OR TOPO_META_DRIVING_TESTS))
     enable_testing()
     # GoogleTest is fetched lazily so the tree builds on a network-less
     # consumer that turns -DTOPO_TPM_BUILD_TESTS=OFF.
