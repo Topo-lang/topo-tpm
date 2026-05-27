@@ -1,0 +1,42 @@
+# Step 0.2.0 -> 0.3.0 migration rules.
+#
+# A handler-path rule: the `validate` handler's In record gains a `region`
+# field with a default, and `amount` is retyped. An operation-fn rule and a
+# pipeline-flow rule are also present to exercise the manual-warning path.
+
+[[rule]]
+kind   = "handler"
+target = "orders::validate"
+note   = "validate now requires a region tag and a wider amount"
+
+  [[rule.field_changes]]
+  op    = "add"
+  field = "region"
+  type  = "i64"
+  default = "0"
+
+  [[rule.field_changes]]
+  op    = "retype"
+  field = "amount"
+  type  = "f64"
+
+[[rule]]
+kind   = "operation-fn"
+target = "orders::run"
+note   = "run gained a config parameter"
+
+  [[rule.param_changes]]
+  op       = "insert"
+  position = 1
+  name     = "cfg"
+  type     = "i64"
+
+[[rule]]
+kind   = "pipeline-flow"
+target = "orders::pipeline"
+note   = "an audit stage is spliced into the flow"
+
+  [[rule.edge_changes]]
+  op   = "insert"
+  from = "validate"
+  to   = "audit"

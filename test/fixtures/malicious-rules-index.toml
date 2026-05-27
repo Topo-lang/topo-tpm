@@ -1,0 +1,12 @@
+# Regression fixture for tpm-path-traversal-via-untrusted-manifest-fields.
+#
+# The ``rules`` field of a [[migration]] entry was previously joined
+# verbatim with ``migrationsDir / step.rulesFile`` and handed to
+# ``toml::parse_file`` — so a hostile package could read arbitrary
+# files (information disclosure via the toml++ parse-error message).
+# The fix restricts ``rules`` to a bare filename via the new
+# ``topo::platform::is_safe_basename`` helper.
+[[migration]]
+from = "^0.1"
+to = "0.2.0"
+rules = "../../../etc/passwd"

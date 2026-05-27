@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+# topo-tpm CMake package config.
+#
+# Consumers do:
+#     find_package(topo-tpm CONFIG REQUIRED)
+#     target_link_libraries(<tgt> PRIVATE topo::tpm::TpmLib)
+#
+# topo-tpm re-exports topo-core targets transitively (Platform / Parser /
+# Sema / Transform), so find_dependency(topo-core) is required for the
+# imported-target propagation to resolve.
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(topo-core CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/topo-tpmTargets.cmake")
+
+check_required_components(topo-tpm)

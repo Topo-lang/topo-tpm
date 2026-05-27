@@ -1,0 +1,13 @@
+# Step 0.3.0 -> 1.0.0 migration rules.
+#
+# A handler-path rule with a name bridge: the `id` field is renamed to
+# `order_id` (the library renamed the field across the version boundary).
+
+[[rule]]
+kind   = "handler"
+target = "orders::persist"
+note   = "the id field is renamed to order_id"
+
+  [[rule.name_bridges]]
+  old = "id"
+  new = "order_id"

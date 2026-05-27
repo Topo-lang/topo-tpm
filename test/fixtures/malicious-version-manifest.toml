@@ -1,0 +1,14 @@
+# Regression fixture for tpm-path-traversal-via-untrusted-manifest-fields.
+#
+# version contains a path-traversal payload that, prior to the fix,
+# SemVer::parse happily accepted (anything after ``-`` is opaque
+# prerelease text per SemVer) and Manifest::validate did not catch.
+# The version was then folded into the cache directory composition via
+# ``fs::path(root) / name / version``, which interprets ``/`` and ``..``
+# as real path separators — so a malicious manifest could escape
+# ``.topo-pkgs/`` and write into the user's home directory.
+[package]
+name = "acme/widget"
+version = "1.0.0-../../../etc/passwd"
+license = "MIT"
+core_compat = "^1.0"
