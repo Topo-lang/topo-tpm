@@ -65,9 +65,8 @@ does not need to add `topo-core` to its own `target_link_libraries`.
 ## Project status
 
 `topo-tpm` is the MVP of the package-management mechanism described in
-the [declaration-package spec](https://github.com/topo-lang/topo-core)
-(see `.aidesk/base/60-spec/topo-tpm/` in the topo-core repo). `install`,
-`migrate`, and `publish` work end-to-end with a git-backed registry;
+the [declaration-package spec](https://github.com/topo-lang/topo-core).
+`install`, `migrate`, and `publish` work end-to-end with a git-backed registry;
 the migration engine handles the three-path resolution
 (builtin → topo-app → tpm-package, priority `tpm > topo-app >
 builtin`) and the dual-contract verifier extends topo-core's
