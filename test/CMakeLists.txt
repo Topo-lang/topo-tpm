@@ -41,7 +41,6 @@ gtest_discover_tests(tpm-tests DISCOVERY_TIMEOUT 30
 # tpm CLI integration tests — spawn the built `tpm` binary as a
 # subprocess against a scratch project root. Covers `install --from`,
 # `migrate` rejection on missing tpm.lock, and `publish` stub exit.
-# Audit issue: tpm-no-integration-tests-for-cli-flows.
 #
 # Windows-skipped for now: every test times out on the GHA windows-2022
 # runner (tpm.exe never returns to runProcessCapture, while ubuntu and

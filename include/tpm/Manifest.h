@@ -8,7 +8,7 @@
 
 namespace tpm {
 
-/// Package kinds (package-format spec §1.1). Exactly one per package.
+/// Package kinds. Exactly one per package.
 ///
 /// `Count` is a sentinel for size-of-enum compile-time checks (see
 /// `tpm/lib/Commands.cpp` — `kDirRules` width is `static_assert`ed
@@ -27,14 +27,14 @@ const char* kindToString(PackageKind kind);
 constexpr const char* kCurrentManifestSchemaVersion = "1";
 
 /// One [dependencies] entry: a SemVer requirement plus an optional explicit
-/// registry source override (package-format spec §1.2).
+/// registry source override.
 struct Dependency {
     std::string name;            // "<namespace>/<name>"
     std::string versionReq;      // SemVer requirement string
     std::string registry;        // optional git URL / central-registry name override
 };
 
-/// One [bindings] host entry — advisory metadata only (spec §1.2).
+/// One [bindings] host entry — advisory metadata only.
 struct Binding {
     std::string host;            // cpp / rust / java / python / typescript
     std::string manager;         // vcpkg / cargo / pip / maven
@@ -42,7 +42,7 @@ struct Binding {
     std::string version;         // optional
 };
 
-/// Parsed `tpm.toml`. Field set follows package-format spec §1.2.
+/// Parsed `tpm.toml`.
 struct Manifest {
     // [package]
     std::string name;
@@ -66,7 +66,7 @@ struct Manifest {
     /// `error` with a human-readable reason.
     static std::optional<Manifest> load(const std::string& path, std::string& error);
 
-    /// Validate against the spec schema (required fields, kind enum,
+    /// Validate against the manifest schema (required fields, kind enum,
     /// core_compat is a parseable range, name shape). Returns the list of
     /// problems; empty == valid.
     std::vector<std::string> validate() const;

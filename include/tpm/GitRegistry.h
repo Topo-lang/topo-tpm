@@ -16,7 +16,7 @@ struct ResolvedGitPackage {
     std::string revision;    // commit SHA the tag points to
 };
 
-/// git-based registry driver (package-format spec §5.1). A package is a git
+/// git-based registry driver. A package is a git
 /// repository and a published version is a git tag. All git invocations go
 /// through `topo::platform::runProcessCapture` — no shell, no implicit network
 /// outside these explicit calls.

@@ -24,7 +24,7 @@ std::string computePackageContentHash(const std::string& packageDir) {
         const fs::path& p = it->path();
         // Exclude VCS metadata and the generated lock from the content hash.
         const std::string fname = p.filename().string();
-        // Audit issue tpm-path-traversal-via-untrusted-manifest-fields:
+        // Audit: untrusted package contents enabling path traversal.
         // ``is_directory`` / ``is_regular_file`` follow symlinks by
         // default. A symlink in the package directory pointing to
         // ``/etc/passwd`` would otherwise have its target's content

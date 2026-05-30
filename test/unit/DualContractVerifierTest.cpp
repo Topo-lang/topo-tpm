@@ -1,5 +1,5 @@
 // Tests for the dual-contract verifier — L1 structural verification under
-// match-key / name-bridge renaming (declaration-migration spec §6).
+// match-key / name-bridge renaming.
 
 #include "tpm/DualContractVerifier.h"
 

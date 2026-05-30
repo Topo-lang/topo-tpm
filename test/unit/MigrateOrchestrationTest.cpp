@@ -10,7 +10,7 @@
 //      every touched file back when a later step hard-fails, so a
 //      crash mid-chain never leaves a half-migrated consumer tree.
 //
-// Issue: tpm-migrate-dry-run-and-rollback-gaps.
+// Pins the dry-run-forward-threading and apply-rollback gaps.
 //
 // Each test builds a minimal project: tpm.lock + .topo-pkgs/<pkg>/<ver>/
 // (tpm.toml + migrations/index.toml + rule files) + one consumer .topo,

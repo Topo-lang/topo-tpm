@@ -1,7 +1,7 @@
 // Regression tests for the tpm project-level FileLock (cross-process
 // advisory lock backed by topo::platform::FileLock).
 //
-// Audit issue: tpm-no-file-lock-on-cache-and-lockfile-writes.
+// Pins the file-lock guard around cache and lock-file writes.
 //
 // Verifies:
 //   1. Two same-process FileLock instances on the same path serialise —

@@ -5,9 +5,9 @@
 
 namespace tpm {
 
-/// Project-local package cache (package-format spec §7 open question — the
-/// MVP picks the project-local `.topo-pkgs/` layout; a global cache is left
-/// for later). Packages land at `.topo-pkgs/<namespace>/<name>/<version>/`.
+/// Project-local package cache. The MVP picks the project-local
+/// `.topo-pkgs/` layout; a global cache is left for later. Packages land
+/// at `.topo-pkgs/<namespace>/<name>/<version>/`.
 class Cache {
 public:
     /// Construct a cache rooted at `<projectRoot>/.topo-pkgs`.

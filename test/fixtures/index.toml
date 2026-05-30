@@ -1,5 +1,5 @@
 # A migrations/index.toml fixture — two consecutive version-to-version
-# steps, exercising the multi-step chain of declaration-migration spec §4.2.
+# steps, exercising the multi-step declaration-migration chain.
 
 [[migration]]
 from = ">=0.2.0, <0.3.0"

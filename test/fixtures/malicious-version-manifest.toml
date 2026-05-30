@@ -1,4 +1,4 @@
-# Regression fixture for tpm-path-traversal-via-untrusted-manifest-fields.
+# Regression fixture for path traversal via untrusted manifest fields.
 #
 # version contains a path-traversal payload that, prior to the fix,
 # SemVer::parse happily accepted (anything after ``-`` is opaque

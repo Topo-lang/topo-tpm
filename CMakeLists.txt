@@ -14,13 +14,13 @@ project(topo-tpm
 # dependency — it only link-depends on topo::core::TopoPlatform for the
 # cross-platform subprocess primitive that drives `git`.
 #
-# The declaration-migration mechanism (declaration-migration spec) is the
-# one part that, by design, reuses the topo-core frontend: the engine
-# parses the consumer's `.topo` (Lexer / Parser / Sema -> SymbolTable) and
-# the dual-contract verifier extends topo-core's SemanticVerifier. The
-# spec (§4.1 / §5 / §9) explicitly sanctions this coupling — migration is
-# a declaration-level transform and can only be verified against parsed
-# declarations. The link below is therefore spec-driven, not incidental.
+# The declaration-migration mechanism is the one part that, by design,
+# reuses the topo-core frontend: the engine parses the consumer's `.topo`
+# (Lexer / Parser / Sema -> SymbolTable) and the dual-contract verifier
+# extends topo-core's SemanticVerifier. This coupling is intentional —
+# migration is a declaration-level transform and can only be verified
+# against parsed declarations. The link below is therefore by design, not
+# incidental.
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -85,7 +85,7 @@ target_include_directories(TpmLib PRIVATE
 # the git subprocess primitive. TopoParser / TopoSema / TopoTransform give
 # the migration engine the frontend it parses the consumer `.topo` with and
 # the SemanticVerifier the dual-contract verifier extends — see the file
-# header for why this coupling is spec-sanctioned.
+# header for why this coupling is intentional.
 target_link_libraries(TpmLib
     PUBLIC
         topo::core::TopoPlatform

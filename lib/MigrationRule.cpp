@@ -66,7 +66,7 @@ std::string tstr(const toml::table& t, const char* key) {
 
 } // namespace
 
-// ── §4.3 *.migration.toml ───────────────────────────────────────────────
+// ── *.migration.toml ────────────────────────────────────────────────────
 
 std::optional<MigrationRuleSet> MigrationRuleSet::load(const std::string& path,
                                                        std::string& error) {
@@ -221,8 +221,8 @@ std::optional<MigrationRuleSet> MigrationRuleSet::load(const std::string& path,
 
     // Reject duplicate (kind, target) pairs within the same file. Two
     // rules sharing `id()` would produce two indistinguishable lines in
-    // the migration report and the engine would silently apply both —
-    // see tpm-extensibility-fragilities §3.
+    // the migration report and the engine would silently apply both, so
+    // the duplicate is rejected here at load time.
     std::set<std::string> seenIds;
     for (size_t i = 0; i < set.rules.size(); ++i) {
         const std::string ruleId = set.rules[i].id();
@@ -239,7 +239,7 @@ std::optional<MigrationRuleSet> MigrationRuleSet::load(const std::string& path,
     return set;
 }
 
-// ── §4.2 migrations/index.toml ──────────────────────────────────────────
+// ── migrations/index.toml ───────────────────────────────────────────────
 
 std::optional<MigrationIndex> MigrationIndex::load(const std::string& path,
                                                    bool& exists,
@@ -285,7 +285,7 @@ std::optional<MigrationIndex> MigrationIndex::load(const std::string& path,
                            "and `rules`";
             return std::nullopt;
         }
-        // Audit issue tpm-path-traversal-via-untrusted-manifest-fields:
+        // Audit: untrusted manifest fields enabling path traversal.
         // ``rules`` is later joined into ``migrationsDir / rulesFile``
         // and passed to ``toml::parse_file``, so a malicious package
         // could read arbitrary files (information disclosure via the
@@ -342,7 +342,7 @@ MigrationIndex::selectPath(const std::string& fromVersion,
 
     // Greedily chain steps: from the current version, find a step whose
     // `from` range covers it; advance to that step's `to`; repeat until the
-    // target is reached. Ordered by ascending `to` (§4.2).
+    // target is reached. Ordered by ascending `to`.
     std::vector<MigrationIndexEntry> sorted = entries;
     std::sort(sorted.begin(), sorted.end(),
               [](const MigrationIndexEntry& a, const MigrationIndexEntry& b) {

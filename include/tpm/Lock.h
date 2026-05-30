@@ -7,7 +7,7 @@
 
 namespace tpm {
 
-/// One pinned, fully-resolved package (package-format spec §1.3).
+/// One pinned, fully-resolved package.
 struct LockedPackage {
     std::string name;
     std::string version;       // exact resolved version (not a range)

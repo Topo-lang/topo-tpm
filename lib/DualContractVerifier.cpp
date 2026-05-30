@@ -28,7 +28,7 @@ std::string mapName(const std::map<std::string, std::string>& rm,
 ///
 /// So L1 normalizes a `record<...>` to `record<>` (its structural kind,
 /// not its field list) and a `union<...>` likewise. Field-level
-/// correctness inside the record is owned by the §3 match-key logic in the
+/// correctness inside the record is owned by the match-key logic in the
 /// engine, not re-litigated here. A genuine shape change — record turning
 /// into a scalar, a different stdlib type, a changed pointer / ownership
 /// modifier — still differs and is still caught.
@@ -63,10 +63,11 @@ ContractVerification DualContractVerifier::verifyL1(
 
     // The migration verifier replays the four-domain comparison of
     // topo-core's `SemanticVerifier` (functions / classes / logic blocks /
-    // constraints, §6.2 L1) but, instead of requiring "same name set on
-    // both sides", projects the BEFORE side's names through the rename
-    // map and then compares. A bridged rename therefore matches; a genuine
-    // add / remove / shape change still surfaces as a diff.
+    // constraints — the L1 structural layer) but, instead of requiring
+    // "same name set on both sides", projects the BEFORE side's names
+    // through the rename map and then compares. A bridged rename therefore
+    // matches; a genuine add / remove / shape change still surfaces as a
+    // diff.
 
     // ── functions: count, presence, param count, return type ────────────
     {
@@ -122,10 +123,10 @@ ContractVerification DualContractVerifier::verifyL1(
             // x:int) — types match slot-by-slot but the caller-visible
             // parameter order has flipped, which is a breaking change for
             // every positional call site). Flag this as a "potential
-            // reorder" L1 diagnostic. The §5 `param_changes` migration rule
-            // is not yet wired (declaration-migration.md §5), so this is a
-            // forward-looking guard against silent breakage rather than a
-            // gate on an existing rewrite path.
+            // reorder" L1 diagnostic. The `param_changes` migration rule
+            // is not yet wired, so this is a forward-looking guard against
+            // silent breakage rather than a gate on an existing rewrite
+            // path.
             if (fa.params.size() == fb.params.size() &&
                 fa.params.size() > 1) {
                 bool anyPositionalNameMismatch = false;

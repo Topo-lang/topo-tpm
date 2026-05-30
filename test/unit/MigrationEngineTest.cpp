@@ -1,6 +1,5 @@
 // Tests for the migration engine — the three migration paths, the auto /
-// manual outcomes, and the dual-contract verifier gate
-// (declaration-migration spec §1.3 / §5 / §6 / §8).
+// manual outcomes, and the dual-contract verifier gate.
 
 #include "tpm/MigrationEngine.h"
 #include "tpm/MigrationRule.h"
@@ -14,7 +13,7 @@ using namespace tpm;
 namespace {
 
 // A consumer `.topo` whose handlers carry record<...> In/Out types — the
-// canonical handler-path subject (declaration-migration spec §1.3).
+// canonical handler-path subject.
 const char* kConsumerTopo = R"topo(
 namespace orders {
   public:
@@ -39,7 +38,7 @@ MigrationRule makeRule(MigrationKind k, const std::string& target) {
 
 } // namespace
 
-// ── handler path — auto migration (§8.1) ────────────────────────────────
+// ── handler path — auto migration ───────────────────────────────────────
 
 TEST(MigrationEngine, HandlerRetypeIsAutoAndRewritesRecord) {
     // Retype `amount` to f64 — the structural shape is preserved, so L1
@@ -65,7 +64,8 @@ TEST(MigrationEngine, HandlerRetypeIsAutoAndRewritesRecord) {
 
 TEST(MigrationEngine, HandlerAddWithDefaultIsAuto) {
     // Add a `region` field with a default — the default supplies the new
-    // value, so the §8.1 precondition is met and the outcome is auto.
+    // value, so the auto-migration precondition is met and the outcome is
+    // auto.
     MigrationRule r = makeRule(MigrationKind::Handler, "orders::validate");
     FieldChange fc;
     fc.op = FieldChange::Op::Add;
@@ -92,7 +92,7 @@ TEST(MigrationEngine, HandlerAddWithDefaultIsAuto) {
 }
 
 TEST(MigrationEngine, HandlerAddWithoutDefaultIsManual) {
-    // Add a field with no default and no scope source — §3.2 step 4 routes
+    // Add a field with no default and no scope source — this routes
     // it to a manual warning, not a silent guess.
     MigrationRule r = makeRule(MigrationKind::Handler, "orders::validate");
     FieldChange fc;
@@ -157,7 +157,7 @@ TEST(MigrationEngine, HandlerRuleWithUnmatchedAnchorIsNoOp) {
     EXPECT_FALSE(res.changed);
 }
 
-// ── operation-fn / pipeline-flow paths — manual in this MVP (§8.2) ──────
+// ── operation-fn / pipeline-flow paths — manual in this MVP ─────────────
 //
 // The MVP engine does not land token edits for these paths; per the
 // fix for the phantom-location issue, the engine emits one manual
@@ -278,8 +278,7 @@ TEST(MigrationEngine, UnparseableInputIsHardError) {
 
 // ── hard error: rewrite is unparseable ──────────────────────────────────
 
-// Regression for audit issue
-// tpm-migration-engine-inconsistent-report-on-rewrite-parse-failure.
+// Regression for inconsistent report shape on a rewrite parse failure.
 //
 // When `migrateSource` produces a rewrite that no longer parses, both
 // L1-fail and unparseable-rewrite paths share user-facing semantics —

@@ -6,7 +6,7 @@
 namespace tpm {
 
 /// Compute the SHA-256 content hash over a package directory's normalized
-/// file set (package-format spec §1.3).
+/// file set.
 ///
 /// Normalization: every regular file under `packageDir` is enumerated with a
 /// path relative to the package root, using '/' separators; the `.git/`

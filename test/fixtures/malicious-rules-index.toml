@@ -1,4 +1,4 @@
-# Regression fixture for tpm-path-traversal-via-untrusted-manifest-fields.
+# Regression fixture for path traversal via untrusted manifest fields.
 #
 # The ``rules`` field of a [[migration]] entry was previously joined
 # verbatim with ``migrationsDir / step.rulesFile`` and handed to

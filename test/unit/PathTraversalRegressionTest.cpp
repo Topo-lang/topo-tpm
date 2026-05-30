@@ -1,4 +1,4 @@
-// Regression tests for tpm-path-traversal-via-untrusted-manifest-fields.
+// Regression tests for path traversal via untrusted manifest fields.
 //
 // Three attack surfaces are pinned here:
 //   1. SemVer prerelease string accepts ``..`` / ``/`` —

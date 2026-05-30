@@ -190,7 +190,7 @@ std::vector<std::string> Manifest::validate() const {
         problems.push_back("[package].version '" + version +
                            "' is not valid SemVer 2.0.0");
     } else {
-        // Audit issue tpm-path-traversal-via-untrusted-manifest-fields:
+        // Audit: untrusted manifest fields enabling path traversal.
         // SemVer prerelease strings (anything after ``-``) accept
         // arbitrary text by spec, including ``../``. We later join the
         // version into ``.topo-pkgs/<name>/<version>`` to compute a
@@ -205,16 +205,14 @@ std::vector<std::string> Manifest::validate() const {
                 problems.push_back(
                     "[package].version '" + version +
                     "' contains a path separator; path-traversal payload "
-                    "rejected (issue "
-                    "tpm-path-traversal-via-untrusted-manifest-fields)");
+                    "rejected");
                 break;
             }
         }
         if (version.find("..") != std::string::npos) {
             problems.push_back(
                 "[package].version '" + version +
-                "' contains '..'; path-traversal payload rejected "
-                "(issue tpm-path-traversal-via-untrusted-manifest-fields)");
+                "' contains '..'; path-traversal payload rejected");
         }
     }
 

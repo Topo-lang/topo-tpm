@@ -6,7 +6,7 @@
 
 namespace tpm {
 
-/// CLI sub-command implementations (package-format spec §4). Each returns a
+/// CLI sub-command implementations. Each returns a
 /// process exit code (0 == success).
 ///
 /// `args` excludes the program name and the sub-command verb.

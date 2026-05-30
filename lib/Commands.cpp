@@ -26,7 +26,7 @@ namespace fs = std::filesystem;
 namespace tpm {
 namespace {
 
-// ── kind → directory layout (package-format spec §1.4) ──────────────────
+// ── kind → directory layout ─────────────────────────────────────────────
 
 // PackageKind has 5 real values plus `Count` sentinel; the array width
 // must match the real value count exactly. Adding a 6th kind forces
@@ -65,7 +65,7 @@ bool dirRequired(const DirRule& rule, PackageKind kind) {
 
 /// True when `dir` holds at least one content entry. A directory that only
 /// holds a `.gitkeep` placeholder (written by `tpm init` so empty kind
-/// directories survive VCS) counts as empty — spec §1.4 gates verify on
+/// directories survive VCS) counts as empty — verify gates on
 /// logical content, not on the placeholder.
 bool dirNonEmpty(const fs::path& dir) {
     if (!fs::exists(dir) || !fs::is_directory(dir)) return false;
@@ -133,8 +133,8 @@ void writeFile(const fs::path& p, const std::string& content) {
 
 /// Path of the project-level tpm lock-file. Acquired by every command
 /// that mutates ``tpm.lock`` or ``.topo-pkgs/``. The lock file lives at
-/// ``<dir>/.tpm-lock`` and is created if absent. Audit issue:
-/// ``tpm-no-file-lock-on-cache-and-lockfile-writes``.
+/// ``<dir>/.tpm-lock`` and is created if absent. Serializes concurrent
+/// writes to the cache and lock-file so parallel tpm runs do not race.
 fs::path projectLockPath(const std::string& dir) {
     return fs::path(dir) / ".tpm-lock";
 }
@@ -171,7 +171,7 @@ void splitPkgSpec(const std::string& spec, std::string& name,
     }
 }
 
-// ── dependency resolution + install (git-based registry, spec §5.1) ─────
+// ── dependency resolution + install (git-based registry) ────────────────
 
 /// Resolve every dependency in `manifest` against the git registry and write
 /// the resolved set into `lock`. Returns false on any failure.
@@ -311,7 +311,7 @@ void printUsage() {
         "  add <pkg>[@<req>]    Add a dependency, resolve, update tpm.lock\n"
         "  remove <pkg>         Remove a dependency, prune tpm.lock\n"
         "  install              Install what tpm.lock pins (resolve if no lock)\n"
-        "  verify               Validate the package against the format spec\n"
+        "  verify               Validate the package against the package format\n"
         "  tree                 Print the resolved dependency graph\n"
         "  publish              Tag the git repo as a published version (stub)\n"
         "  migrate              Apply a package's cross-version migration rules\n"
@@ -393,8 +393,7 @@ int cmdAdd(const std::vector<std::string>& args) {
 
     // Project-level file lock: serialise concurrent tpm invocations
     // that all want to mutate ``tpm.lock`` / ``.topo-pkgs/``. Blocks
-    // until acquired. Audit issue:
-    // tpm-no-file-lock-on-cache-and-lockfile-writes.
+    // until acquired.
     ::topo::platform::FileLock projLock(projectLockPath(dir));
     if (!acquireProjectLock(projLock)) return 1;
 
@@ -559,7 +558,7 @@ int cmdInstall(const std::vector<std::string>& args) {
         std::string dest =
             cache.packageDir(srcManifest->name, srcManifest->version);
 
-        // Audit issue tpm-path-traversal-via-untrusted-manifest-fields:
+        // Audit: untrusted manifest fields enabling path traversal.
         // Manifest::validate() already rejects path-separator and ``..``
         // payloads in version, but the dest is still composed from
         // untrusted name + version fields. Defence-in-depth: confirm
@@ -592,7 +591,7 @@ int cmdInstall(const std::vector<std::string>& args) {
         std::error_code ec;
         fs::remove_all(tmpDest, ec);
         fs::create_directories(destPath.parent_path(), ec);
-        // Audit issue tpm-path-traversal-via-untrusted-manifest-fields:
+        // Audit: untrusted source directory enabling path traversal.
         // without ``copy_symlinks`` ``fs::copy`` dereferences source
         // symlinks, so a hostile ``--from`` directory pointing at
         // ``/etc/passwd`` would have its content silently copied into
@@ -757,7 +756,7 @@ int cmdVerify(const std::vector<std::string>& args) {
     }
     std::cout << "verify OK — package '" << m.name << "' "
               << m.version << " (" << kindToString(m.kind)
-              << ") conforms to the format spec\n";
+              << ") conforms to the package format\n";
     return 0;
 }
 
@@ -813,7 +812,7 @@ int cmdPublish(const std::vector<std::string>& args) {
     std::string dir = flag(args, "--dir");
     if (dir.empty()) dir = ".";
 
-    // Per spec §4, publish must run verify first.
+    // publish must run verify first.
     int vrc = cmdVerify({"--dir", dir});
     if (vrc != 0) {
         std::cerr << "publish refused: package fails 'tpm verify'\n";
@@ -829,8 +828,7 @@ int cmdPublish(const std::vector<std::string>& args) {
     std::cerr << "tpm publish is a STUB in this MVP.\n"
                  "  The package verifies; the git-tag / central-registry "
                  "upload step is not implemented.\n"
-                 "  To publish manually with the git-based registry "
-                 "(spec §5.1):\n"
+                 "  To publish manually with the git-based registry:\n"
                  "    git tag "
               << loaded->version << " && git push origin " << loaded->version
               << "\n";
@@ -839,13 +837,13 @@ int cmdPublish(const std::vector<std::string>& args) {
 
 // ── tpm migrate ────────────────────────────────────────────────────────
 //
-// Applies a package's cross-version migration rules (declaration-migration
-// spec §8) to the consumer's `.topo` files.
+// Applies a package's cross-version declaration-migration rules to the
+// consumer's `.topo` files.
 //
 //   tpm migrate --package <ns/name> --to <version> [--source <dir>] [--apply]
 //
-// The rule files come from the installed package's `migrations/` directory
-// (§4.2). The package's *current* version is the version `tpm.lock` pins.
+// The rule files come from the installed package's `migrations/` directory.
+// The package's *current* version is the version `tpm.lock` pins.
 // `--source` selects the directory whose `.topo` files are migrated
 // (default: the project root). Without `--apply` the command is a dry run:
 // it prints the migration report but does not write any file.
@@ -990,7 +988,7 @@ int cmdMigrate(const std::vector<std::string>& args) {
         return 0;
     }
 
-    // Select the continuous chain of migration steps (§4.2).
+    // Select the continuous chain of migration steps.
     auto pathOpt = indexOpt->selectPath(fromVersion, toVersion, err);
     if (!pathOpt) {
         std::cerr << "error: " << err << "\n";
@@ -1018,7 +1016,7 @@ int cmdMigrate(const std::vector<std::string>& args) {
     bool hardError = false;
 
     // Per-file in-memory cursor. The output of step N is the input of
-    // step N+1 (§4.2), so we keep each file's current text in memory
+    // step N+1, so we keep each file's current text in memory
     // and feed it forward across steps. Without this, dry-run reads
     // the on-disk source every step, dropping any changes step N
     // would have committed had `--apply` been passed — so the preview
@@ -1032,7 +1030,7 @@ int cmdMigrate(const std::vector<std::string>& args) {
     std::map<std::string, std::string> originals;
 
     // Each step's rules are applied in `to`-ascending order; the output of
-    // one step is the input of the next (§4.2). Every step verifies
+    // one step is the input of the next. Every step verifies
     // independently via the dual-contract verifier inside the engine.
     for (const auto& step : *pathOpt) {
         fs::path rulesPath = migrationsDir / step.rulesFile;
@@ -1119,7 +1117,7 @@ int cmdMigrate(const std::vector<std::string>& args) {
     if (!apply) std::cout << "  (dry run)";
     std::cout << "\n";
 
-    // Exit code: hard error → 1; any manual outcome → non-zero (§8.3);
+    // Exit code: hard error → 1; any manual outcome → non-zero;
     // all auto → 0.
     if (hardError) return 1;
     if (totalManual > 0) {

@@ -1,5 +1,4 @@
-// Tests for migration-rule parsing and version-range path selection
-// (declaration-migration spec §4).
+// Tests for migration-rule parsing and version-range path selection.
 
 #include "tpm/MigrationRule.h"
 
@@ -15,7 +14,7 @@ std::string fixture(const char* name) {
 }
 } // namespace
 
-// ── *.migration.toml parsing (§4.3) ─────────────────────────────────────
+// ── *.migration.toml parsing ────────────────────────────────────────────
 
 TEST(MigrationRule, ParsesHandlerRuleWithFieldChanges) {
     std::string err;
@@ -85,7 +84,7 @@ TEST(MigrationRule, RuleIdCombinesKindAndTarget) {
     EXPECT_EQ(r.id(), "handler:orders::validate");
 }
 
-// ── index.toml + version-range path selection (§4.2) ────────────────────
+// ── index.toml + version-range path selection ───────────────────────────
 
 TEST(MigrationIndex, ParsesTwoStepIndex) {
     std::string err;
@@ -167,7 +166,7 @@ TEST(MigrationIndex, RejectsDowngrade) {
     EXPECT_NE(err.find("downgrade"), std::string::npos);
 }
 
-// ── Duplicate rule id rejection (tpm-extensibility-fragilities §3) ──────
+// ── Duplicate rule id rejection ─────────────────────────────────────────
 
 #include <cstdio>
 #include <filesystem>
@@ -191,7 +190,7 @@ std::string writeTempFile(const std::string& contents) {
 TEST(MigrationRule, RejectsDuplicateKindTargetWithinFile) {
     // Two rules sharing (kind=handler, target=orders::validate) would
     // produce two indistinguishable entries in the migration report and
-    // the engine would apply both — see tpm-extensibility-fragilities §3.
+    // the engine would apply both — so the loader rejects the duplicate.
     const std::string toml =
         "[[rule]]\n"
         "kind = \"handler\"\n"
@@ -230,7 +229,7 @@ TEST(MigrationRule, AcceptsDifferentTargetsWithSameKind) {
     std::filesystem::remove(path);
 }
 
-// ── Manifest schema version (tpm-extensibility-fragilities §2) ──────────
+// ── Manifest schema version ─────────────────────────────────────────────
 
 #include "tpm/Manifest.h"
 

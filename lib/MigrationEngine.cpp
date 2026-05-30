@@ -279,8 +279,8 @@ std::vector<RecordSpan> findRecordSpans(const std::vector<Token>& toks) {
 }
 
 /// Apply a rule's field_changes / name_bridges to a record field list.
-/// Returns the new field list. `ambiguous` flags a §3 / §8 manual-warning
-/// condition (mismatch with the record's actual shape).
+/// Returns the new field list. `ambiguous` flags a manual-warning
+/// condition (the rule mismatches the record's actual shape).
 std::vector<std::pair<std::string, std::string>>
 rewriteRecordFields(
     const std::vector<std::pair<std::string, std::string>>& fields,
@@ -289,7 +289,7 @@ rewriteRecordFields(
     ambiguous = false;
     std::vector<std::pair<std::string, std::string>> out = fields;
 
-    // name bridges (§3.2 step 1): rename a field, type stays equal.
+    // name bridges: rename a field, type stays equal.
     for (const auto& brg : rule.nameBridges) {
         for (auto& f : out) {
             if (f.first == brg.oldName) f.first = brg.newName;
@@ -366,12 +366,12 @@ MigrationResult MigrationEngine::migrateSource(
     OffsetIndex idx(source);
 
     std::vector<TextEdit> edits;
-    // OLD->NEW rename map fed to the dual-contract verifier (§6.2 L1).
+    // OLD->NEW rename map fed to the dual-contract verifier's L1 layer.
     std::vector<std::pair<std::string, std::string>> renameMap;
 
     for (const auto& rule : rules.rules) {
         if (rule.kind == MigrationKind::Handler) {
-            // handler path (§1.3): the handler's In is a record<...>.
+            // handler path: the handler's In is a record<...>.
             // Locate every record<...> in the consumer `.topo` whose field
             // set matches the rule's *old* shape (the fields the rule
             // removes / retypes / bridges must be present).
@@ -417,12 +417,11 @@ MigrationResult MigrationEngine::migrateSource(
                     continue;
                 }
 
-                // §3.2 step 4: a record field whose new value cannot be
-                // resolved (an `add` with no default) becomes a manual
-                // warning. Scope-binding source search (§2) is the
-                // operation-fn path's responsibility, not the handler
-                // path's, so on this path an `add` is auto only with a
-                // default.
+                // A record field whose new value cannot be resolved (an
+                // `add` with no default) becomes a manual warning. The
+                // scope-binding source search is the operation-fn path's
+                // responsibility, not the handler path's, so on this path
+                // an `add` is auto only with a default.
                 bool unresolved = false;
                 for (const auto& fc : rule.fieldChanges) {
                     if (fc.op == FieldChange::Op::Add && !fc.defaultValue) {
@@ -430,7 +429,7 @@ MigrationResult MigrationEngine::migrateSource(
                         entry.reason =
                             "added field '" + fc.field +
                             "' has no default value and no scope source "
-                            "to fill it (spec §3.2 step 4)";
+                            "to fill it";
                         break;
                     }
                 }
@@ -453,9 +452,9 @@ MigrationResult MigrationEngine::migrateSource(
                 result.report.push_back(std::move(entry));
             }
         } else {
-            // operation-fn and pipeline-flow paths: the spec defines them
-            // (§5) but the MVP engine does not yet land token edits for
-            // them. Per §8.2 every site they would touch is reported as a
+            // operation-fn and pipeline-flow paths: defined by the
+            // migration model, but the MVP engine does not yet land token
+            // edits for them. Every site they would touch is reported as a
             // manual warning rather than silently skipped — so the gap is
             // visible and never produces an unverified auto migration.
             //
@@ -504,8 +503,8 @@ MigrationResult MigrationEngine::migrateSource(
         result.rewrittenSource = applyEdits(source, edits);
         result.changed = (result.rewrittenSource != source);
 
-        // Audit fix (tpm-migration-engine-inconsistent-report-on-rewrite-
-        // parse-failure): both post-rewrite failure paths must downgrade
+        // Audit fix for inconsistent report on rewrite parse failure:
+        // both post-rewrite failure paths must downgrade
         // any Auto report entries to Manual. The two paths share user-
         // facing semantics — "no rewrite was committed" — so they must
         // share report shape too. The previous unparseable-rewrite branch
@@ -529,7 +528,7 @@ MigrationResult MigrationEngine::migrateSource(
             analyze(result.rewrittenSource, sourcePath, afterOk);
         if (!afterOk) {
             // The token edit produced an unparseable `.topo` — the rule
-            // overshot what migration can express (§6.3, "not even L1").
+            // overshot what migration can express (not even the L1 layer).
             result.ok = false;
             result.error =
                 sourcePath +
@@ -545,7 +544,7 @@ MigrationResult MigrationEngine::migrateSource(
         auto v = verifier.verifyL1(beforeTable, afterTable, renameMap);
         if (!v.l1Pass) {
             // L1 failure: the rewrite added / removed / reshaped a
-            // declaration. Per §6.3 this is a rule error — report and do
+            // declaration. This is a rule error — report and do
             // not commit the rewrite.
             result.ok = false;
             std::ostringstream os;
@@ -560,8 +559,8 @@ MigrationResult MigrationEngine::migrateSource(
             return result;
         }
         // L1 passed. L2 (stage topology / visibility) is not implemented
-        // in this MVP — DualContractVerifier::l2Available() is false. Per
-        // §6.2 / §6.3 an L2-uncleared site must not auto-migrate. For the
+        // in this MVP — DualContractVerifier::l2Available() is false. An
+        // L2-uncleared site must not auto-migrate. For the
         // handler path L2 is vacuous (a handler-In record reshape touches
         // no DAG edge and no visibility domain), so the handler-path auto
         // edits stand. pipeline-flow sites — the only ones L2 truly gates

@@ -13,7 +13,7 @@
 // canonical "good" input. Negative cases (malformed manifest,
 // missing tpm.lock) are covered alongside.
 //
-// Issue: tpm-no-integration-tests-for-cli-flows.
+// These cover the CLI flows the library-level unit tests cannot reach.
 
 #include "topo/Platform/Process.h"
 
