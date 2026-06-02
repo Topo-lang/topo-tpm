@@ -56,12 +56,16 @@ jobs:
 
       # Cache the topo-core install so PRs don't re-build it every time.
       # Keyed on TOPO_CORE_REF so a bump to a new ref invalidates the cache.
+      # v4: TOPO_CORE_REF is `main`, so bump the suffix to force a rebuild
+      # against the topo-core runProcessCapture raw-Win32 capture fix (a cached
+      # install would otherwise restore an earlier build whose reproc-based
+      # capture still times out the tpm-cli suite on windows-2022).
       - name: Cache topo-core install
         id: topo-core-cache
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/topo-install
-          key: topo-core-${{ env.TOPO_CORE_REF }}-${{ matrix.os }}-v1
+          key: topo-core-${{ env.TOPO_CORE_REF }}-${{ matrix.os }}-v4
 
       - name: Build & install topo-core
         if: steps.topo-core-cache.outputs.cache-hit != 'true'
@@ -89,7 +93,22 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --timeout 120
+        run: |
+          # Windows: the tpm-cli integration tests spawn the MinGW-linked tpm.exe
+          # (libstdc++-6 / libgcc_s_seh-1 / libwinpthread-1). When a stale
+          # libstdc++-6.dll (Git/Strawberry's, earlier on PATH) shadows the build
+          # compiler's, tpm.exe fails to load with 0xC0000139
+          # (STATUS_ENTRYPOINT_NOT_FOUND) — the tests see exitCode -1073741511 +
+          # empty output. Put the exact build-time gcc bin dir (from CMakeCache)
+          # FIRST on PATH so the matching runtime resolves; the spawned child
+          # inherits this PATH.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cxx=$(grep -m1 '^CMAKE_CXX_COMPILER:' build/CMakeCache.txt | cut -d= -f2)
+            if [ -n "$cxx" ]; then
+              export PATH="$(cygpath -u "$(dirname "$cxx")"):${PATH}"
+            fi
+          fi
+          ctest --test-dir build --output-on-failure --timeout 120
 
       # Smoke test: install topo-tpm, then verify a downstream
       # `find_package(topo-tpm)` resolves and links cleanly.

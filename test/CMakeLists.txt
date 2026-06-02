@@ -42,25 +42,25 @@ gtest_discover_tests(tpm-tests DISCOVERY_TIMEOUT 30
 # subprocess against a scratch project root. Covers `install --from`,
 # `migrate` rejection on missing tpm.lock, and `publish` stub exit.
 #
-# Windows-skipped for now: every test times out on the GHA windows-2022
-# runner (tpm.exe never returns to runProcessCapture, while ubuntu and
-# macOS finish each test in ~10 ms). Looks like a MinGW-host
-# stdio/subprocess interaction; tracked as a follow-up issue. The
-# library-level unit tests above run on all three platforms.
-if(NOT WIN32)
-    add_executable(tpm-cli-integration-tests
-        cli/TpmCliIntegrationTest.cpp
-    )
-    target_link_libraries(tpm-cli-integration-tests PRIVATE
-        topo::core::TopoPlatform
-        GTest::gtest_main
-    )
-    target_compile_definitions(tpm-cli-integration-tests PRIVATE
-        TOPO_TPM_BINARY="$<TARGET_FILE:tpm>"
-        TPM_CLI_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cli/fixtures"
-    )
-    add_dependencies(tpm-cli-integration-tests tpm)
-    tpm_set_compiler_flags(tpm-cli-integration-tests)
-    gtest_discover_tests(tpm-cli-integration-tests DISCOVERY_TIMEOUT 30
-        PROPERTIES LABELS "toolchain;topo-tpm;realpath" TIMEOUT 60)
-endif()
+# tpm-cli integration tests spawn the built tpm via
+# topo::platform::runProcessCapture. Previously Windows-skipped: the spawn hung
+# on the GHA windows-2022 runner (tpm.exe never returned, while ubuntu/macOS
+# finished each test in ~10 ms). Root cause + fix in topo-core — runProcessCapture
+# now bounds reproc's drain with a process deadline, so the Windows
+# loopback-socket EOF that failed to arrive can no longer hang the call. Runs on
+# all three platforms now.
+add_executable(tpm-cli-integration-tests
+    cli/TpmCliIntegrationTest.cpp
+)
+target_link_libraries(tpm-cli-integration-tests PRIVATE
+    topo::core::TopoPlatform
+    GTest::gtest_main
+)
+target_compile_definitions(tpm-cli-integration-tests PRIVATE
+    TOPO_TPM_BINARY="$<TARGET_FILE:tpm>"
+    TPM_CLI_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cli/fixtures"
+)
+add_dependencies(tpm-cli-integration-tests tpm)
+tpm_set_compiler_flags(tpm-cli-integration-tests)
+gtest_discover_tests(tpm-cli-integration-tests DISCOVERY_TIMEOUT 30
+    PROPERTIES LABELS "toolchain;topo-tpm;realpath" TIMEOUT 60)
