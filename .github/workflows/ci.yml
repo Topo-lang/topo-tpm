@@ -56,12 +56,16 @@ jobs:
 
       # Cache the topo-core install so PRs don't re-build it every time.
       # Keyed on TOPO_CORE_REF so a bump to a new ref invalidates the cache.
+      # v2: TOPO_CORE_REF is `main`, so bump the suffix to force a rebuild
+      # against the topo-core runProcessCapture deadline fix (the cache would
+      # otherwise restore a pre-fix install and the tpm-cli suite would still
+      # hang on windows-2022).
       - name: Cache topo-core install
         id: topo-core-cache
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/topo-install
-          key: topo-core-${{ env.TOPO_CORE_REF }}-${{ matrix.os }}-v1
+          key: topo-core-${{ env.TOPO_CORE_REF }}-${{ matrix.os }}-v2
 
       - name: Build & install topo-core
         if: steps.topo-core-cache.outputs.cache-hit != 'true'
