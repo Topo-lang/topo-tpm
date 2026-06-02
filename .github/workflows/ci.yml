@@ -93,7 +93,22 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --timeout 120
+        run: |
+          # Windows: the tpm-cli integration tests spawn the MinGW-linked tpm.exe
+          # (libstdc++-6 / libgcc_s_seh-1 / libwinpthread-1). When a stale
+          # libstdc++-6.dll (Git/Strawberry's, earlier on PATH) shadows the build
+          # compiler's, tpm.exe fails to load with 0xC0000139
+          # (STATUS_ENTRYPOINT_NOT_FOUND) — the tests see exitCode -1073741511 +
+          # empty output. Put the exact build-time gcc bin dir (from CMakeCache)
+          # FIRST on PATH so the matching runtime resolves; the spawned child
+          # inherits this PATH.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cxx=$(grep -m1 '^CMAKE_CXX_COMPILER:' build/CMakeCache.txt | cut -d= -f2)
+            if [ -n "$cxx" ]; then
+              export PATH="$(cygpath -u "$(dirname "$cxx")"):${PATH}"
+            fi
+          fi
+          ctest --test-dir build --output-on-failure --timeout 120
 
       # Smoke test: install topo-tpm, then verify a downstream
       # `find_package(topo-tpm)` resolves and links cleanly.
