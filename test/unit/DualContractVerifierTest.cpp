@@ -69,6 +69,69 @@ namespace orders {
     EXPECT_TRUE(r.l1Pass) << (r.l1Differences.empty() ? "" : r.l1Differences[0]);
 }
 
+// ── L1: a reshape of a record nested inside a container is normalized ───
+
+TEST(DualContractVerifier, NestedRecordReshapeIsNormalizedAwayInL1) {
+    // A handler whose return/parameter type wraps a record in a stdlib
+    // container (`optional<record<...>>`) is the common nullable-result
+    // shape. Reshaping that nested record's fields is exactly the migration
+    // delta L1 must NOT re-litigate — structuralSignature has to normalize a
+    // record at any nesting depth, not only at the top level. Before the fix
+    // the nested record was expanded verbatim, so this passed only for
+    // top-level records and falsely rejected the nested case.
+    const char* kNestedBefore = R"topo(
+namespace orders {
+  public:
+    optional<record<id: i64, amount: f64>> lookup(string key);
+    bool take(slice<record<id: i64>> rows);
+}
+)topo";
+    const char* kNestedAfter = R"topo(
+namespace orders {
+  public:
+    optional<record<id: i32, amount: f64, tag: string>> lookup(string key);
+    bool take(slice<record<id: i32, extra: bool>> rows);
+}
+)topo";
+    auto a = build(kNestedBefore);
+    auto b = build(kNestedAfter);
+
+    DualContractVerifier v;
+    auto r = v.verifyL1(a, b, {});
+    EXPECT_TRUE(r.l1Pass)
+        << "a reshape of a record nested inside optional<...> / slice<...> "
+           "must be normalized away in L1, not flagged as a shape change; "
+           "first diff: "
+        << (r.l1Differences.empty() ? "(none)" : r.l1Differences[0]);
+}
+
+TEST(DualContractVerifier, NestedContainerKindChangeStillFailsL1) {
+    // The normalization must stay precise: changing the CONTAINER around the
+    // nested record (optional -> slice) is a genuine shape change and must
+    // still be caught, even though the inner record normalizes to `<...>`.
+    const char* kBeforeOpt = R"topo(
+namespace orders {
+  public:
+    optional<record<id: i64>> lookup(string key);
+}
+)topo";
+    const char* kAfterSlice = R"topo(
+namespace orders {
+  public:
+    slice<record<id: i64>> lookup(string key);
+}
+)topo";
+    auto a = build(kBeforeOpt);
+    auto b = build(kAfterSlice);
+
+    DualContractVerifier v;
+    auto r = v.verifyL1(a, b, {});
+    EXPECT_FALSE(r.l1Pass)
+        << "changing the container around a nested record (optional -> "
+           "slice) is a real shape change and must still fail L1";
+    EXPECT_FALSE(r.l1Differences.empty());
+}
+
 // ── L1: adding a declaration is rejected (shape changed) ────────────────
 
 TEST(DualContractVerifier, AddedDeclarationFailsL1) {

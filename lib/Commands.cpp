@@ -112,23 +112,42 @@ std::string lockPath(const std::string& dir) {
 /// and on NTFS via ``MoveFileExW`` (which ``fs::rename`` uses on
 /// Windows when source and destination are on the same volume — they
 /// always are here because both paths share ``p.parent_path()``).
-void writeFile(const fs::path& p, const std::string& content) {
-    fs::create_directories(p.parent_path());
+///
+/// Returns ``false`` and writes nothing into place on any failure — a
+/// temp that could not be opened, a short write (disk full / quota), or
+/// a rename+fallback that both failed. The temp file is NEVER renamed
+/// over the live file unless its content was confirmed fully written, so
+/// a failed write can never replace a good ``tpm.toml`` / ``tpm.lock``
+/// with a truncated one. Callers MUST treat ``false`` as a hard error
+/// instead of reporting success.
+[[nodiscard]] bool writeFile(const fs::path& p, const std::string& content) {
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
     fs::path tmp = p;
     tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return false; // temp could not be opened — write nothing.
         out << content;
+        out.flush();
+        if (!out) { // short write / quota / I/O error — discard the temp.
+            out.close();
+            fs::remove(tmp, ec);
+            return false;
+        }
     }
-    std::error_code ec;
     fs::rename(tmp, p, ec);
     if (ec) {
         // Fallback for the rare cross-device case (shouldn't happen,
-        // same parent dir): copy + remove. Best-effort; failure
-        // surfaces by the next read seeing the stale file.
-        fs::copy_file(tmp, p, fs::copy_options::overwrite_existing, ec);
+        // same parent dir): copy + remove. The copy_file result is
+        // checked — a failure here means nothing was written, so report
+        // it rather than swallow it.
+        std::error_code copyEc;
+        fs::copy_file(tmp, p, fs::copy_options::overwrite_existing, copyEc);
         fs::remove(tmp, ec);
+        if (copyEc) return false;
     }
+    return true;
 }
 
 /// Path of the project-level tpm lock-file. Acquired by every command
@@ -238,6 +257,27 @@ bool installLocked(Lock& lock, const Cache& cache, std::string& error) {
 
     for (auto& lp : lock.packages) {
         std::string dest = cache.packageDir(lp.name, lp.version);
+
+        // Defence-in-depth: confirm the composed destination stays under the
+        // cache root before any fs::remove_all / create_directories touches
+        // it. Lock::load already rejects path-traversal in name/version, but
+        // installLocked is also reachable with a Lock built by other code
+        // paths, so re-affirm containment here. The cache-relative subpath
+        // `<name>/<version>` is passed as the input (not the already-rooted
+        // `dest`) so the check is correct even when the cache root is a
+        // relative path — `dest` is the verbatim write target.
+        {
+            fs::path subpath = fs::path(lp.name) / lp.version;
+            auto sanitised =
+                topo::platform::sanitizePath(subpath, fs::path(cache.root()));
+            if (!sanitised) {
+                error = "locked package '" + lp.name +
+                        "' resolves to a destination outside the cache root (" +
+                        dest + " not under " + cache.root() +
+                        "); rejected as a path-traversal payload";
+                return false;
+            }
+        }
 
         if (!cache.isInstalled(lp.name, lp.version)) {
             // source form: "<repoUrl>#<tag>"
@@ -360,7 +400,11 @@ int cmdInit(const std::vector<std::string>& args) {
         m.kind = *k;
     } // else defaults to declaration
 
-    writeFile(mpath, m.toToml());
+    if (!writeFile(mpath, m.toToml())) {
+        std::cerr << "error: failed to write " << mpath
+                  << " (no changes made)\n";
+        return 1;
+    }
     std::cout << "created " << mpath << "\n";
 
     // Create kind-required directories with a .gitkeep so they survive VCS.
@@ -429,7 +473,11 @@ int cmdAdd(const std::vector<std::string>& args) {
         m.dependencies.push_back(std::move(dep));
     }
 
-    writeFile(manifestPath(dir), m.toToml());
+    if (!writeFile(manifestPath(dir), m.toToml())) {
+        std::cerr << "error: failed to write " << manifestPath(dir)
+                  << " (no changes made)\n";
+        return 1;
+    }
     std::cout << (replaced ? "updated" : "added") << " dependency " << name
               << " = \"" << req << "\"\n";
 
@@ -443,9 +491,14 @@ int cmdAdd(const std::vector<std::string>& args) {
     Cache cache(dir);
     if (!installLocked(lock, cache, err)) {
         std::cerr << "error: install failed: " << err << "\n";
+        std::cerr << "  (manifest updated; tpm.lock left untouched)\n";
         return 1;
     }
-    writeFile(lockPath(dir), lock.toToml());
+    if (!writeFile(lockPath(dir), lock.toToml())) {
+        std::cerr << "error: failed to write " << lockPath(dir)
+                  << " (manifest updated; tpm.lock left untouched)\n";
+        return 1;
+    }
     std::cout << "updated tpm.lock (" << lock.packages.size()
               << " package(s) pinned)\n";
     return 0;
@@ -486,7 +539,11 @@ int cmdRemove(const std::vector<std::string>& args) {
         return 1;
     }
 
-    writeFile(manifestPath(dir), m.toToml());
+    if (!writeFile(manifestPath(dir), m.toToml())) {
+        std::cerr << "error: failed to write " << manifestPath(dir)
+                  << " (no changes made)\n";
+        return 1;
+    }
     std::cout << "removed dependency " << name << "\n";
 
     // Re-resolve so the lock prunes the removed package and its now-orphaned
@@ -505,7 +562,11 @@ int cmdRemove(const std::vector<std::string>& args) {
                                    return p.name == name;
                                }),
                 existing->packages.end());
-            writeFile(lockPath(dir), existing->toToml());
+            if (!writeFile(lockPath(dir), existing->toToml())) {
+                std::cerr << "error: failed to write " << lockPath(dir)
+                          << " (manifest updated; tpm.lock left stale)\n";
+                return 1;
+            }
         }
         return 0;
     }
@@ -518,7 +579,11 @@ int cmdRemove(const std::vector<std::string>& args) {
         fs::remove(lockPath(dir), ec);
         std::cout << "tpm.lock removed (no dependencies remain)\n";
     } else {
-        writeFile(lockPath(dir), lock.toToml());
+        if (!writeFile(lockPath(dir), lock.toToml())) {
+            std::cerr << "error: failed to write " << lockPath(dir)
+                      << " (manifest updated; tpm.lock left stale)\n";
+            return 1;
+        }
         std::cout << "updated tpm.lock (" << lock.packages.size()
                   << " package(s) pinned)\n";
     }
@@ -670,13 +735,23 @@ int cmdInstall(const std::vector<std::string>& args) {
     }
 
     Cache cache(dir);
+    // Snapshot the serialized lock so a first-seen content hash filled in by
+    // installLocked gets persisted even when a lock already existed — without
+    // this the freshly computed TOFU pin is silently discarded and `tpm
+    // verify` keeps skipping the integrity check for that package.
+    std::string lockBefore = lock.toToml();
     if (!installLocked(lock, cache, err)) {
         std::cerr << "error: install failed: " << err << "\n";
         return 1;
     }
 
-    if (!lockExists)
-        writeFile(lockPath(dir), lock.toToml());
+    if (!lockExists || lock.toToml() != lockBefore) {
+        if (!writeFile(lockPath(dir), lock.toToml())) {
+            std::cerr << "error: failed to write " << lockPath(dir)
+                      << " (packages installed; tpm.lock not updated)\n";
+            return 1;
+        }
+    }
 
     std::cout << "install complete — cache at " << cache.root() << "\n";
     return 0;
@@ -1081,7 +1156,12 @@ int cmdMigrate(const std::vector<std::string>& args) {
                     if (originals.find(tfKey) == originals.end()) {
                         originals[tfKey] = src;
                     }
-                    writeFile(tf, res.rewrittenSource);
+                    if (!writeFile(tf, res.rewrittenSource)) {
+                        std::cerr << "error: failed to write " << tf.string()
+                                  << " during migration\n";
+                        hardError = true;
+                        break;
+                    }
                     std::cout << "    wrote " << tf.string() << "\n";
                 } else {
                     std::cout << "    (dry run — " << tf.string()
@@ -1101,13 +1181,16 @@ int cmdMigrate(const std::vector<std::string>& args) {
     if (hardError && apply && !originals.empty()) {
         size_t rolled = 0;
         for (const auto& [path, content] : originals) {
-            std::ofstream out(path, std::ios::binary | std::ios::trunc);
-            if (out) {
-                out << content;
-                out.close();
-                if (out) ++rolled;
-            }
+            // Route the restore through the atomic writeFile (tmp + rename)
+            // so a rollback is all-or-nothing — a direct truncating open
+            // could leave a consumer `.topo` half-written, the exact state
+            // rollback exists to prevent.
+            if (writeFile(fs::path(path), content)) ++rolled;
         }
+        if (rolled < originals.size())
+            std::cerr << "error: rollback incomplete — " << rolled << " of "
+                      << originals.size() << " file(s) restored; the "
+                      << "remaining file(s) may be left mid-migration\n";
         std::cerr << "error: rolled back " << rolled
                   << " file(s) due to mid-migration failure\n";
     }

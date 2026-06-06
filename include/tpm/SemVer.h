@@ -43,6 +43,12 @@ private:
     struct Clause {
         enum class Op { Caret, Tilde, Gte, Gt, Lte, Lt, Eq, Any } op = Op::Any;
         SemVer bound;
+        // How many `major.minor.patch` components the user actually wrote
+        // (1, 2, or 3) before `splitVersion` padded the short form. The
+        // caret/tilde upper-bound math needs this to tell `~1` (major-only,
+        // `<2.0.0`) from `~1.0` (minor given, `<1.1.0`), and `^0`
+        // (major-only, `<1.0.0`) from `^0.0.0` (`<0.0.1`). 3 when unknown.
+        int components = 3;
     };
     std::vector<Clause> clauses_;
     std::string raw_;

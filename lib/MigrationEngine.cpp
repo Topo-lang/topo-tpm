@@ -228,9 +228,45 @@ std::vector<TargetReference> findTargetReferences(
     return refs;
 }
 
+/// Split every `>>` (ShiftRight) into two `>` (RAngle) and `<<` (ShiftLeft)
+/// into two `<` (LAngle), mirroring the parser's `consumeCloseAngle`.
+///
+/// The lexer collapses two adjacent `>` into a single ShiftRight token (and
+/// two `<` into ShiftLeft), so a nested generic whose closing angles abut —
+/// e.g. `record<id: i64, items: slice<i64>>` — ends in one ShiftRight, not
+/// two RAngle. The angle-depth tracking in findRecordSpans (and the edit
+/// end-offset scan that reuses `lastTok`) only recognises single angles, so
+/// without this split the record never closes and the span is silently
+/// dropped. The second synthetic angle takes `column + 1` so the byte
+/// offsets the engine derives from (line, column) stay exact.
+std::vector<Token> splitAngleShifts(const std::vector<Token>& toks) {
+    std::vector<Token> out;
+    out.reserve(toks.size());
+    for (const Token& t : toks) {
+        if (t.kind == TokenKind::ShiftRight || t.kind == TokenKind::ShiftLeft) {
+            bool right = t.kind == TokenKind::ShiftRight;
+            Token a = t;
+            a.kind = right ? TokenKind::RAngle : TokenKind::LAngle;
+            a.text = right ? ">" : "<";
+            Token b = a;
+            b.location.column += 1;
+            out.push_back(std::move(a));
+            out.push_back(std::move(b));
+        } else {
+            out.push_back(t);
+        }
+    }
+    return out;
+}
+
 /// Scan a token stream for every top-level `record< ... >` occurrence.
 /// Nested records / generics are captured as part of the enclosing field's
 /// type text (angle depth > 1).
+///
+/// The caller MUST pass a token stream that has been through
+/// `splitAngleShifts` so abutting nested-generic closers (`>>`) decrement the
+/// angle depth correctly; otherwise a record ending in a nested generic is
+/// silently skipped.
 std::vector<RecordSpan> findRecordSpans(const std::vector<Token>& toks) {
     std::vector<RecordSpan> spans;
     for (size_t i = 0; i + 1 < toks.size(); ++i) {
@@ -362,7 +398,11 @@ MigrationResult MigrationEngine::migrateSource(
         return result;
     }
 
-    auto tokens = lexAll(source, sourcePath);
+    // Split `>>`/`<<` into single angle tokens so nested generics whose
+    // closers abut (e.g. `record<..., items: slice<i64>>`) close their
+    // record span correctly — the raw lexer emits one ShiftRight, which the
+    // angle-depth tracking in findRecordSpans would otherwise never decrement.
+    auto tokens = splitAngleShifts(lexAll(source, sourcePath));
     OffsetIndex idx(source);
 
     std::vector<TextEdit> edits;

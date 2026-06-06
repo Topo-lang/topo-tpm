@@ -36,15 +36,36 @@ std::string structuralSignature(const topo::TypeNode& t) {
     std::string sig;
     if (t.isConst) sig += "const ";
     sig += std::string(topo::ownershipKindName(t.ownership)) + " ";
+    for (size_t i = 0; i < t.nameParts.size(); ++i) {
+        if (i) sig += "::";
+        sig += t.nameParts[i];
+    }
     if (!t.recordFields.empty()) {
-        // record<...> / union<...> — normalize the field list away.
-        for (size_t i = 0; i < t.nameParts.size(); ++i) {
-            if (i) sig += "::";
-            sig += t.nameParts[i];
-        }
+        // record<...> / union<...> — normalize the field list away. The
+        // record's own field set is the migration's intended delta and must
+        // not be re-litigated here (see the L1 invariant above).
         sig += "<...>";
-    } else {
-        sig += t.toString();
+    } else if (!t.templateArgs.empty() || !t.assocBindings.empty()) {
+        // A container / parameterised type. Recurse into each argument so a
+        // record (or union) nested one or more levels deep — the very common
+        // `optional<record<...>>` / `slice<record<...>>` handler shape — is
+        // ALSO normalized to `<...>`, instead of being expanded verbatim by
+        // TypeNode::toString(). Without this, reshaping a nested record's
+        // fields (exactly what a handler migration does) would be flagged as
+        // a spurious "shape changed" diff.
+        sig += "<";
+        bool first = true;
+        for (const auto& arg : t.templateArgs) {
+            if (!first) sig += ", ";
+            sig += structuralSignature(arg);
+            first = false;
+        }
+        for (const auto& binding : t.assocBindings) {
+            if (!first) sig += ", ";
+            sig += binding.name + " = " + structuralSignature(binding.type());
+            first = false;
+        }
+        sig += ">";
     }
     if (t.modifier == topo::TypeNode::Ref) sig += "&";
     else if (t.modifier == topo::TypeNode::Ptr) sig += "*";

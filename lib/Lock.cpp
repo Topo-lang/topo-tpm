@@ -50,7 +50,50 @@ std::optional<Lock> Lock::load(const std::string& path, bool& exists,
             lock.packages.push_back(std::move(lp));
         }
     }
+
+    // A tpm.lock is generated, never hand-edited; a name/version carrying a
+    // path separator or `..` is a tampered file and MUST NOT be allowed to
+    // compose a cache destination that escapes `.topo-pkgs/`. This mirrors
+    // Manifest::validate()'s path-traversal defence on the lock surface,
+    // which feeds the same cache.packageDir(...) -> fs::remove_all path.
+    auto problems = lock.validate();
+    if (!problems.empty()) {
+        error = "tpm.lock: " + problems.front();
+        return std::nullopt;
+    }
     return lock;
+}
+
+std::vector<std::string> Lock::validate() const {
+    std::vector<std::string> problems;
+    auto reject = [&](const std::string& pkg, const char* what,
+                      const std::string& value, const char* why) {
+        problems.push_back(std::string("[[package]] '") + pkg + "' " + what +
+                           " '" + value + "' " + why +
+                           "; path-traversal payload rejected");
+    };
+    for (const auto& p : packages) {
+        // version composes the leaf cache directory and must contain NO path
+        // separator at all (mirrors Manifest::validate()'s version guard).
+        if (p.version.find('/') != std::string::npos ||
+            p.version.find('\\') != std::string::npos)
+            reject(p.name, "version", p.version, "contains a path separator");
+        if (p.version.find("..") != std::string::npos)
+            reject(p.name, "version", p.version, "contains '..'");
+
+        // name is the `<namespace>/<name>` coordinate and legitimately holds
+        // a single forward slash, so a bare `/` is allowed — but a backslash,
+        // a `..` segment, or a leading separator (which would reset the cache
+        // join to an absolute path) all escape the cache root and are
+        // rejected.
+        if (!p.name.empty() && (p.name.front() == '/' || p.name.front() == '\\'))
+            reject(p.name, "name", p.name, "is an absolute path");
+        if (p.name.find('\\') != std::string::npos)
+            reject(p.name, "name", p.name, "contains a backslash separator");
+        if (p.name.find("..") != std::string::npos)
+            reject(p.name, "name", p.name, "contains '..'");
+    }
+    return problems;
 }
 
 std::string Lock::toToml() const {

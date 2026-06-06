@@ -3,6 +3,7 @@
 #include "semver.hpp"
 
 #include <cctype>
+#include <limits>
 #include <sstream>
 
 // Why this file is only a PARTIAL adoption of Neargye/semver
@@ -176,14 +177,43 @@ std::optional<VersionReq> VersionReq::parse(const std::string& text) {
                 if (c == '.') ++dots;
             clause.op = (dots >= 2) ? Clause::Op::Eq : Clause::Op::Caret;
         }
-        auto v = SemVer::parse(trim(p.substr(verStart)));
+        std::string verText = trim(p.substr(verStart));
+        auto v = SemVer::parse(verText);
         if (!v) return std::nullopt;
         clause.bound = *v;
+        // Record how many components the user actually wrote, before
+        // splitVersion's padding erases the distinction. The caret/tilde
+        // upper bound depends on it (`~1` vs `~1.0`, `^0` vs `^0.0.0`).
+        {
+            std::string core = verText;
+            if (!core.empty() && (core[0] == 'v' || core[0] == 'V'))
+                core = core.substr(1);
+            size_t dash = core.find('-');
+            if (dash != std::string::npos) core = core.substr(0, dash);
+            size_t plus = core.find('+');
+            if (plus != std::string::npos) core = core.substr(0, plus);
+            int dots = 0;
+            for (char c : core)
+                if (c == '.') ++dots;
+            clause.components = dots + 1; // 1 dot => 2 components, etc.
+            if (clause.components > 3) clause.components = 3;
+        }
         req.clauses_.push_back(clause);
     }
     if (req.clauses_.empty()) return std::nullopt;
     return req;
 }
+
+namespace {
+// Bump a component for an upper bound without signed-overflow UB. A
+// component already at INT_MAX cannot grow; treat that as an effectively
+// unbounded ceiling (INT_MAX) rather than wrapping to a negative value.
+int bumpForUpper(int x) {
+    return x == std::numeric_limits<int>::max()
+               ? std::numeric_limits<int>::max()
+               : x + 1;
+}
+} // namespace
 
 bool VersionReq::matches(const SemVer& v) const {
     for (const auto& c : clauses_) {
@@ -208,18 +238,32 @@ bool VersionReq::matches(const SemVer& v) const {
             break;
         case Clause::Op::Caret: {
             // ^1.2.3 := >=1.2.3, <2.0.0 ; ^0.3 := >=0.3.0, <0.4.0 ;
-            // ^0.0.x := >=0.0.x, <0.0.(x+1)
+            // ^0.0.x := >=0.0.x, <0.0.(x+1) ; ^0 := >=0.0.0, <1.0.0 .
+            // A leading-zero major (`^0`) only widens to `<1.0.0` when the
+            // user wrote major only; `^0.0.0` stays `<0.0.1`. `c.components`
+            // carries the originally specified width before padding.
             if (v < b) return false;
             SemVer upper = b;
             if (b.major > 0) {
-                upper.major = b.major + 1;
+                upper.major = bumpForUpper(b.major);
                 upper.minor = 0;
                 upper.patch = 0;
             } else if (b.minor > 0) {
-                upper.minor = b.minor + 1;
+                upper.minor = bumpForUpper(b.minor);
+                upper.patch = 0;
+            } else if (c.components <= 1) {
+                // ^0 — a zero major with no minor/patch given allows the
+                // whole 0.x range below 1.0.0.
+                upper.major = bumpForUpper(b.major);
+                upper.minor = 0;
+                upper.patch = 0;
+            } else if (c.components == 2) {
+                // ^0.0 — bump the minor (Cargo: >=0.0.0, <0.1.0).
+                upper.minor = bumpForUpper(b.minor);
                 upper.patch = 0;
             } else {
-                upper.patch = b.patch + 1;
+                // ^0.0.x — only the patch may move.
+                upper.patch = bumpForUpper(b.patch);
             }
             upper.prerelease.clear();
             if (!(v < upper)) return false;
@@ -227,11 +271,19 @@ bool VersionReq::matches(const SemVer& v) const {
         }
         case Clause::Op::Tilde: {
             // ~1.2.3 := >=1.2.3, <1.3.0 ; ~1.2 := >=1.2.0, <1.3.0 ;
-            // ~1 := >=1.0.0, <2.0.0
+            // ~1 := >=1.0.0, <2.0.0 . Major-only (`~1`) bumps the MAJOR;
+            // a given minor (`~1.0`, `~1.2`, `~1.2.3`) bumps the minor.
+            // `c.components` distinguishes the two after padding.
             if (v < b) return false;
             SemVer upper = b;
-            upper.minor = b.minor + 1;
-            upper.patch = 0;
+            if (c.components <= 1) {
+                upper.major = bumpForUpper(b.major);
+                upper.minor = 0;
+                upper.patch = 0;
+            } else {
+                upper.minor = bumpForUpper(b.minor);
+                upper.patch = 0;
+            }
             upper.prerelease.clear();
             if (!(v < upper)) return false;
             break;

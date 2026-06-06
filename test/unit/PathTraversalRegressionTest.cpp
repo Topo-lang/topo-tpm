@@ -12,12 +12,15 @@
 //      reproduced here as a unit test because spawning ``git`` and a
 //      full cache is out of scope for the unit tier).
 
+#include "tpm/Lock.h"
 #include "tpm/Manifest.h"
 #include "tpm/MigrationRule.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace tpm;
@@ -126,4 +129,71 @@ TEST(PathTraversalRegression, MaliciousRulesFieldRejected) {
         << "MigrationIndex::load must reject 'rules = \"../../../etc/passwd\"'";
     EXPECT_NE(err.find("rules"), std::string::npos);
     EXPECT_NE(err.find("bare filename"), std::string::npos);
+}
+
+// ── 3. tpm.lock name/version path traversal into the package cache ────
+
+namespace {
+std::string writeTempLock(const std::string& tag, const std::string& body) {
+    namespace fs = std::filesystem;
+    fs::path p =
+        fs::temp_directory_path() / ("tpm-lock-traversal-" + tag + ".lock");
+    std::ofstream(p, std::ios::binary | std::ios::trunc) << body;
+    return p.string();
+}
+} // namespace
+
+TEST(PathTraversalRegression, LockVersionTraversalRejected) {
+    // A tpm.lock is generated, never hand-edited; a `version` carrying `..`
+    // would compose `.topo-pkgs/<name>/../../../tmp` and escape the cache
+    // root that `fs::remove_all` clears. Lock::load must reject it, mirroring
+    // Manifest::validate()'s guard on the manifest surface.
+    std::string path = writeTempLock("version", R"toml(
+[[package]]
+name = "acme/widget"
+version = "../../../../tmp/evil"
+source = "git+https://example.invalid/r#v1"
+)toml");
+    bool exists = false;
+    std::string err;
+    auto lock = tpm::Lock::load(path, exists, err);
+    std::filesystem::remove(path);
+    EXPECT_FALSE(lock)
+        << "Lock::load must reject a version containing '..' as a "
+           "path-traversal payload";
+    EXPECT_NE(err.find(".."), std::string::npos);
+}
+
+TEST(PathTraversalRegression, LockNameSeparatorRejected) {
+    // A `..` segment hidden in `name` escapes just as a version one does.
+    std::string path = writeTempLock("name", R"toml(
+[[package]]
+name = "acme/../../../etc"
+version = "1.0.0"
+source = "git+https://example.invalid/r#v1"
+)toml");
+    bool exists = false;
+    std::string err;
+    auto lock = tpm::Lock::load(path, exists, err);
+    std::filesystem::remove(path);
+    EXPECT_FALSE(lock)
+        << "Lock::load must reject a name containing '..' as a "
+           "path-traversal payload";
+}
+
+TEST(PathTraversalRegression, BenignLockStillAccepted) {
+    // A well-formed lock with a plain name/version must still load.
+    std::string path = writeTempLock("ok", R"toml(
+[[package]]
+name = "acme/widget"
+version = "1.2.3"
+source = "git+https://example.invalid/r#v1.2.3"
+)toml");
+    bool exists = false;
+    std::string err;
+    auto lock = tpm::Lock::load(path, exists, err);
+    std::filesystem::remove(path);
+    ASSERT_TRUE(lock) << err;
+    ASSERT_EQ(lock->packages.size(), 1u);
+    EXPECT_EQ(lock->packages[0].version, "1.2.3");
 }

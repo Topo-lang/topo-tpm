@@ -157,6 +157,51 @@ TEST(MigrationEngine, HandlerRuleWithUnmatchedAnchorIsNoOp) {
     EXPECT_FALSE(res.changed);
 }
 
+// ── regression: record whose last field is a nested generic (`>>`) ──────
+
+TEST(MigrationEngine, HandlerRecordEndingInNestedGenericIsMigrated) {
+    // A spec-valid record whose final field type is a nested stdlib generic
+    // closes with `>>`, which the lexer emits as a single ShiftRight token.
+    // The record-span scanner must split that into two `>` so the span
+    // closes; otherwise the matching record is silently skipped — no edit,
+    // no report entry — while migrateSource still reports success. The
+    // retype anchors on `id`, leaving the nested-generic `items` field as
+    // the record's last field (the exact failing shape).
+    const char* kNested = R"topo(
+namespace orders {
+  public:
+    handler validate(record<id: i64, items: slice<i64>> o) -> bool;
+}
+)topo";
+    MigrationRule r = makeRule(MigrationKind::Handler, "orders::validate");
+    FieldChange fc;
+    fc.op = FieldChange::Op::Retype;
+    fc.field = "id";
+    fc.type = "i32";
+    r.fieldChanges.push_back(fc);
+
+    MigrationRuleSet rules;
+    rules.rules.push_back(r);
+
+    MigrationEngine engine;
+    auto res = engine.migrateSource("consumer.topo", kNested, rules);
+    ASSERT_TRUE(res.ok) << res.error;
+    // The record matched: a report entry exists and the file changed.
+    ASSERT_GE(res.report.size(), 1u);
+    EXPECT_TRUE(res.allAuto());
+    EXPECT_TRUE(res.changed)
+        << "a record ending in a nested generic (`slice<i64>>`) must be "
+           "recognised and migrated, not silently skipped";
+    // The retype landed and the nested generic field is preserved intact —
+    // the closing `>>` must be reproduced, not mangled.
+    EXPECT_NE(res.rewrittenSource.find("id: i32"), std::string::npos);
+    EXPECT_NE(res.rewrittenSource.find("items: slice<i64>"),
+              std::string::npos);
+    EXPECT_NE(res.rewrittenSource.find("slice<i64>>"), std::string::npos)
+        << "the record's closing `>>` must survive the rewrite; got:\n"
+        << res.rewrittenSource;
+}
+
 // ── operation-fn / pipeline-flow paths — manual in this MVP ─────────────
 //
 // The MVP engine does not land token edits for these paths; per the
