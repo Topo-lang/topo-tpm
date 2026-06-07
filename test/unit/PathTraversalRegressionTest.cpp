@@ -181,6 +181,68 @@ source = "git+https://example.invalid/r#v1"
            "path-traversal payload";
 }
 
+// ── 4. registry-URL git argument injection (CVE-2017-1000117) ────────
+//
+// `Dependency::registry` is an untrusted manifest / CLI field that flows
+// straight into `git ls-remote` / `git clone` as a positional argument.
+// A value beginning with `-` is read by git as an option
+// (`--upload-pack=…` → arbitrary command execution); `ext::` / `fd::` are
+// arbitrary-command transports. validateRegistryUrl() — called by both
+// Manifest::validate() and resolveDependencies() before any git spawn —
+// must reject these while still accepting legitimate URLs.
+
+TEST(RegistryArgInjectionRegression, UploadPackOptionRejected) {
+    std::string err = validateRegistryUrl("--upload-pack=touch /tmp/pwned");
+    EXPECT_FALSE(err.empty())
+        << "option-like registry URL must be rejected before reaching git";
+    EXPECT_NE(err.find("option-injection"), std::string::npos);
+}
+
+TEST(RegistryArgInjectionRegression, ExtTransportRejected) {
+    EXPECT_FALSE(validateRegistryUrl("ext::sh -c 'id'").empty());
+    EXPECT_FALSE(validateRegistryUrl("git+ext::sh -c 'id'").empty());
+    EXPECT_FALSE(validateRegistryUrl("fd::17").empty());
+}
+
+TEST(RegistryArgInjectionRegression, UnknownSchemeRejected) {
+    // No allow-listed scheme and not scp-like → rejected.
+    EXPECT_FALSE(validateRegistryUrl("javascript:alert(1)").empty());
+    EXPECT_FALSE(validateRegistryUrl("not-a-url").empty());
+    EXPECT_FALSE(validateRegistryUrl("").empty());
+}
+
+TEST(RegistryArgInjectionRegression, LegitimateUrlsAccepted) {
+    EXPECT_TRUE(validateRegistryUrl("https://github.com/acme/widget.git").empty());
+    EXPECT_TRUE(validateRegistryUrl("git+https://github.com/acme/widget.git").empty());
+    EXPECT_TRUE(validateRegistryUrl("ssh://git@example.com/acme/widget.git").empty());
+    EXPECT_TRUE(validateRegistryUrl("git://example.com/acme/widget.git").empty());
+    EXPECT_TRUE(validateRegistryUrl("file:///srv/git/widget.git").empty());
+    // scp-like syntax.
+    EXPECT_TRUE(validateRegistryUrl("git@github.com:acme/widget.git").empty());
+}
+
+TEST(RegistryArgInjectionRegression, MaliciousRegistrySurfacedByValidate) {
+    Manifest m;
+    m.name = "acme/widget";
+    m.version = "1.2.3";
+    m.license = "MIT";
+    m.coreCompat = "^1.0";
+    Dependency dep;
+    dep.name = "evil/pkg";
+    dep.versionReq = "^1.0";
+    dep.registry = "--upload-pack=touch /tmp/pwned";
+    m.dependencies.push_back(dep);
+
+    auto problems = m.validate();
+    bool sawReject = std::any_of(
+        problems.begin(), problems.end(), [](const std::string& s) {
+            return s.find("evil/pkg") != std::string::npos &&
+                   s.find("option-injection") != std::string::npos;
+        });
+    EXPECT_TRUE(sawReject)
+        << "Manifest::validate must reject an option-like registry URL";
+}
+
 TEST(PathTraversalRegression, BenignLockStillAccepted) {
     // A well-formed lock with a plain name/version must still load.
     std::string path = writeTempLock("ok", R"toml(

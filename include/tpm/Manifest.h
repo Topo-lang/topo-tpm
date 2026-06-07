@@ -19,6 +19,16 @@ enum class PackageKind { Declaration, Layout, EventProtocol, StdlibType, Kernel,
 std::optional<PackageKind> parseKind(const std::string& text);
 const char* kindToString(PackageKind kind);
 
+/// Validate a per-dependency `registry` URL before it is handed to `git`
+/// as a positional argument. Blocks the git argument-injection class
+/// (CVE-2017-1000117): values that begin with `-` (interpreted by git as
+/// options, e.g. `--upload-pack=…`) and arbitrary-command transports
+/// (`ext::`, `fd::`). Only an allow-listed scheme set is accepted
+/// (`https://`, `http://`, `ssh://`, `git://`, `file://`, or scp-like
+/// `user@host:path`); an optional `git+` prefix is stripped first.
+/// Returns an empty string when the URL is acceptable, else a diagnostic.
+std::string validateRegistryUrl(const std::string& url);
+
 /// Schema version of the `tpm.toml` manifest format itself (NOT the
 /// user's package version — that's `Manifest::version`). Default `"1"`
 /// when the manifest omits `[package].manifest_version` (back-compat).

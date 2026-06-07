@@ -164,6 +164,55 @@ std::optional<Manifest> Manifest::load(const std::string& path, std::string& err
     return m;
 }
 
+std::string validateRegistryUrl(const std::string& raw) {
+    if (raw.empty()) return "registry URL is empty";
+
+    // Strip an optional `git+` scheme prefix (mirrors resolveDependencies);
+    // validate what `git` will actually receive.
+    std::string url = raw;
+    if (url.rfind("git+", 0) == 0) url = url.substr(4);
+
+    if (url.empty() || url[0] == '-')
+        return "registry URL '" + raw +
+               "' starts with '-'; option-injection payload rejected";
+
+    auto startsWithCI = [&url](const char* p) {
+        size_t n = 0;
+        while (p[n]) ++n;
+        if (url.size() < n) return false;
+        for (size_t i = 0; i < n; ++i)
+            if (std::tolower(static_cast<unsigned char>(url[i])) !=
+                std::tolower(static_cast<unsigned char>(p[i])))
+                return false;
+        return true;
+    };
+
+    // Arbitrary-command git transports — always rejected.
+    for (const char* bad : {"ext::", "fd::"})
+        if (startsWithCI(bad))
+            return "registry URL '" + raw + "' uses the disallowed '" +
+                   std::string(bad) + "' git transport";
+
+    // Allow-listed URL schemes.
+    for (const char* scheme : {"https://", "http://", "ssh://", "git://",
+                               "file://"})
+        if (startsWithCI(scheme)) return "";
+
+    // scp-like syntax: user@host:path — require the '@' (matching the
+    // documented `git@…` form) so a bare `scheme:junk` cannot pass as a
+    // host:path. The ':' must precede any '/'.
+    size_t at = url.find('@');
+    size_t colon = url.find(':');
+    size_t slash = url.find('/');
+    if (at != std::string::npos && colon != std::string::npos && at > 0 &&
+        at < colon && (slash == std::string::npos || colon < slash))
+        return "";
+
+    return "registry URL '" + raw +
+           "' has no allow-listed scheme (https://, ssh://, git://, file://, "
+           "or user@host:path)";
+}
+
 std::vector<std::string> Manifest::validate() const {
     std::vector<std::string> problems;
 
@@ -238,6 +287,11 @@ std::vector<std::string> Manifest::validate() const {
         if (dep.name.find('/') == std::string::npos)
             problems.push_back("dependency '" + dep.name +
                                "' must have the form '<namespace>/<name>'");
+        if (!dep.registry.empty()) {
+            std::string regErr = validateRegistryUrl(dep.registry);
+            if (!regErr.empty())
+                problems.push_back("dependency '" + dep.name + "' " + regErr);
+        }
     }
 
     return problems;

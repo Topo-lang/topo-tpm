@@ -18,8 +18,10 @@ std::optional<std::vector<std::pair<std::string, SemVer>>>
 GitRegistry::listRemoteTags(const std::string& repoUrl,
                             std::string& error) const {
     // `git ls-remote --tags <url>` reads tags without a full clone.
+    // `--` ends option parsing so an option-like URL cannot be read as a git
+    // flag (defense-in-depth; the URL is also scheme-validated upstream).
     auto r = topo::platform::runProcessCapture(
-        "git", {"ls-remote", "--tags", repoUrl});
+        "git", {"ls-remote", "--tags", "--", repoUrl});
     if (r.exitCode != 0) {
         error = "git ls-remote failed for '" + repoUrl + "': " + r.stderrOutput;
         return std::nullopt;
@@ -74,7 +76,7 @@ GitRegistry::resolve(const std::string& repoUrl, const std::string& versionReq,
 
     // Resolve the tag to its commit SHA.
     auto r = topo::platform::runProcessCapture(
-        "git", {"ls-remote", repoUrl, "refs/tags/" + best->first});
+        "git", {"ls-remote", "--", repoUrl, "refs/tags/" + best->first});
     std::string revision;
     if (r.exitCode == 0) {
         // Prefer the peeled ("^{}") line — that is the commit the annotated
@@ -106,7 +108,8 @@ bool GitRegistry::fetchInto(const std::string& repoUrl, const std::string& tag,
                             std::string& error) const {
     // Shallow clone of exactly one tag.
     auto r = topo::platform::runProcessCapture(
-        "git", {"clone", "--depth", "1", "--branch", tag, repoUrl, destDir});
+        "git",
+        {"clone", "--depth", "1", "--branch", tag, "--", repoUrl, destDir});
     if (r.exitCode != 0) {
         error = "git clone failed for '" + repoUrl + "@" + tag +
                 "': " + r.stderrOutput;

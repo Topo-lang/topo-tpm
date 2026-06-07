@@ -224,6 +224,13 @@ bool resolveDependencies(const Manifest& manifest, Lock& lock,
                     "with an explicit `registry = \"git+...\"` URL";
             return false;
         }
+        // Reject option-like / arbitrary-command-transport registry URLs
+        // before any `git` subprocess is spawned (git argument injection,
+        // CVE-2017-1000117). Defense-in-depth alongside Manifest::validate().
+        if (std::string regErr = validateRegistryUrl(repoUrl); !regErr.empty()) {
+            error = "dependency '" + dep.name + "' " + regErr;
+            return false;
+        }
         // Strip an optional `git+` scheme prefix.
         if (repoUrl.rfind("git+", 0) == 0) repoUrl = repoUrl.substr(4);
 
