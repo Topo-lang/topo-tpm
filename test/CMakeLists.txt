@@ -38,7 +38,7 @@ target_compile_definitions(tpm-tests PRIVATE
 )
 tpm_set_compiler_flags(tpm-tests)
 gtest_discover_tests(tpm-tests DISCOVERY_TIMEOUT 30
-    PROPERTIES LABELS "toolchain;topo-tpm" TIMEOUT 60)
+    PROPERTIES LABELS "toolchain\;topo-tpm" TIMEOUT 60)
 
 # tpm CLI integration tests — spawn the built `tpm` binary as a
 # subprocess against a scratch project root. Covers `install --from`,
@@ -65,4 +65,4 @@ target_compile_definitions(tpm-cli-integration-tests PRIVATE
 add_dependencies(tpm-cli-integration-tests tpm)
 tpm_set_compiler_flags(tpm-cli-integration-tests)
 gtest_discover_tests(tpm-cli-integration-tests DISCOVERY_TIMEOUT 30
-    PROPERTIES LABELS "toolchain;topo-tpm;realpath" TIMEOUT 60)
+    PROPERTIES LABELS "toolchain\;topo-tpm\;realpath" TIMEOUT 60)
