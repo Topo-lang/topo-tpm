@@ -245,6 +245,82 @@ namespace orders {
     }
 }
 
+// ── L1: claim-tracking on the after side catches masked removals ────────
+
+TEST(DualContractVerifier, RenameIntoExistingNameDoesNotMaskARemoval) {
+    // before: parse, persist. after: only persist. A rename map that maps
+    // parse -> persist tries to "rename parse into the already-existing
+    // persist", which would mask that one declaration was actually removed
+    // (two became one). Without claim-tracking on the new side this slips
+    // through as a clean rename; with it, the collapsed count is a diff and
+    // L1 must reject.
+    const char* kTwo = R"topo(
+namespace orders {
+  public:
+    handler parse(string raw) -> bool;
+    handler persist(bool b) -> bool;
+}
+)topo";
+    const char* kOne = R"topo(
+namespace orders {
+  public:
+    handler persist(bool b) -> bool;
+}
+)topo";
+    auto a = build(kTwo);
+    auto b = build(kOne);
+
+    DualContractVerifier v;
+    auto r = v.verifyL1(a, b, {{"orders::parse", "orders::persist"}});
+    EXPECT_FALSE(r.l1Pass)
+        << "renaming one declaration onto another that already exists "
+           "collapses two into one — a masked removal L1 must reject";
+    EXPECT_FALSE(r.l1Differences.empty());
+}
+
+TEST(DualContractVerifier, AfterSideSymbolWithNoOriginIsFlagged) {
+    // An after-side declaration that no before-side declaration maps to
+    // (even with an equal count maintained by an unrelated removal) must be
+    // reported as "appeared after migration with no pre-migration origin" —
+    // the claim-tracking leftover check on the new side.
+    const char* kBeforeAB = R"topo(
+namespace orders {
+  public:
+    handler alpha(bool b) -> bool;
+    handler beta(bool b) -> bool;
+}
+)topo";
+    // alpha is renamed to gamma; beta is dropped; delta is newly invented.
+    // Count stays 2 -> 2, so only claim-tracking (not the count check) can
+    // catch beta's removal and delta's invented appearance.
+    const char* kAfterGD = R"topo(
+namespace orders {
+  public:
+    handler gamma(bool b) -> bool;
+    handler delta(bool b) -> bool;
+}
+)topo";
+    auto a = build(kBeforeAB);
+    auto b = build(kAfterGD);
+
+    DualContractVerifier v;
+    auto r = v.verifyL1(a, b, {{"orders::alpha", "orders::gamma"}});
+    EXPECT_FALSE(r.l1Pass)
+        << "beta removed + delta invented under an equal count must be "
+           "caught by after-side claim tracking, not silently passed";
+    bool sawAppeared = false, sawNoCounterpart = false;
+    for (const auto& d : r.l1Differences) {
+        if (d.find("appeared after migration") != std::string::npos)
+            sawAppeared = true;
+        if (d.find("no counterpart after migration") != std::string::npos)
+            sawNoCounterpart = true;
+    }
+    EXPECT_TRUE(sawAppeared)
+        << "delta (invented) must be flagged as appearing with no origin";
+    EXPECT_TRUE(sawNoCounterpart)
+        << "beta (removed) must be flagged as having no counterpart";
+}
+
 // ── L2 is a recorded MVP gap, not a silent skip ─────────────────────────
 
 TEST(DualContractVerifier, L2IsUnavailableInThisMvp) {

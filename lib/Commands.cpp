@@ -17,9 +17,11 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <system_error>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -379,6 +381,17 @@ int cmdInit(const std::vector<std::string>& args) {
     std::string dir = flag(args, "--dir");
     if (dir.empty()) dir = ".";
 
+    // Take the project lock BEFORE the existence check so the
+    // check-then-write is atomic against a concurrent `tpm init` on the
+    // same directory. Without it, two parallel inits both saw "no
+    // tpm.toml", both passed the guard, and the second silently clobbered
+    // the first's scaffold (TOCTOU). The lock file lives at
+    // `<dir>/.tpm-lock`, so the directory must exist before we open it.
+    std::error_code mkEc;
+    fs::create_directories(dir, mkEc);
+    ::topo::platform::FileLock projLock(projectLockPath(dir));
+    if (!acquireProjectLock(projLock)) return 1;
+
     std::string mpath = manifestPath(dir);
     if (fs::exists(mpath)) {
         std::cerr << "error: tpm.toml already exists at " << mpath << "\n";
@@ -488,22 +501,36 @@ int cmdAdd(const std::vector<std::string>& args) {
     std::cout << (replaced ? "updated" : "added") << " dependency " << name
               << " = \"" << req << "\"\n";
 
-    // Re-resolve and rewrite the lock.
+    // Re-resolve and rewrite the lock. The manifest now carries `name` but
+    // the on-disk tpm.lock does not yet pin it, so any early return below
+    // leaves the project in a manifest-ahead-of-lock state. Surface that
+    // stale-lock condition explicitly — "left untouched" alone reads as
+    // "everything is fine," when in fact the lock no longer matches the
+    // manifest and the user must re-run `tpm add` / `tpm install` to
+    // reconcile (or `tpm remove` to undo the manifest edit).
+    auto warnStaleLock = [&]() {
+        std::cerr << "warning: tpm.lock is now STALE — the manifest gained '"
+                  << name << "' but the lock was not updated. Re-run 'tpm "
+                     "add "
+                  << name << "' or 'tpm install' once the cause above is "
+                     "resolved, or 'tpm remove "
+                  << name << "' to revert the manifest edit.\n";
+    };
     Lock lock;
     if (!resolveDependencies(m, lock, err)) {
         std::cerr << "error: resolution failed: " << err << "\n";
-        std::cerr << "  (manifest updated; tpm.lock left untouched)\n";
+        warnStaleLock();
         return 1;
     }
     Cache cache(dir);
     if (!installLocked(lock, cache, err)) {
         std::cerr << "error: install failed: " << err << "\n";
-        std::cerr << "  (manifest updated; tpm.lock left untouched)\n";
+        warnStaleLock();
         return 1;
     }
     if (!writeFile(lockPath(dir), lock.toToml())) {
-        std::cerr << "error: failed to write " << lockPath(dir)
-                  << " (manifest updated; tpm.lock left untouched)\n";
+        std::cerr << "error: failed to write " << lockPath(dir) << "\n";
+        warnStaleLock();
         return 1;
     }
     std::cout << "updated tpm.lock (" << lock.packages.size()
@@ -637,9 +664,20 @@ int cmdInstall(const std::vector<std::string>& args) {
         // the composed path stays under the cache root before writing.
         // This is a second line, not the primary defence — the primary
         // defence is validate()'s reject at parse time.
-        fs::path cacheRoot(dir);
-        cacheRoot /= ".topo-pkgs";
-        auto sanitised = topo::platform::sanitizePath(dest, cacheRoot);
+        //
+        // sanitizePath joins a RELATIVE `input` onto `root` before the
+        // containment check, so the input must be the cache-relative
+        // `<name>/<version>` subpath — NOT the already-rooted `dest`.
+        // Passing `dest` (which is `<dir>/.topo-pkgs/<name>/<version>`)
+        // when `--dir` is relative (the default `.`) made sanitizePath
+        // validate a doubled, fictional `<root>/<root>/<name>/<version>`
+        // path: the guard checked the wrong string and a traversal payload
+        // in name/version was measured against the doubled prefix. Mirror
+        // installLocked: pass the subpath, keep `dest` as the verbatim
+        // write target.
+        fs::path cacheRoot(cache.root());
+        fs::path subpath = fs::path(srcManifest->name) / srcManifest->version;
+        auto sanitised = topo::platform::sanitizePath(subpath, cacheRoot);
         if (!sanitised) {
             std::cerr << "error: package at " << fromDir
                       << " resolves to a destination outside the cache "
@@ -1016,11 +1054,40 @@ int cmdMigrate(const std::vector<std::string>& args) {
     if (sourceDir.empty()) sourceDir = dir;
     bool apply = std::find(args.begin(), args.end(), "--apply") != args.end();
 
-    // For --apply we mutate consumer .topo files in-place; serialise
-    // with other tpm invocations via the project-level lock.
-    // Dry-run mode (no --apply) is read-only and stays lock-free.
-    ::topo::platform::FileLock projLock(projectLockPath(dir));
-    if (apply && !acquireProjectLock(projLock)) return 1;
+    // For --apply we mutate consumer .topo files in-place under
+    // `sourceDir`, so the lock that serialises against concurrent tpm
+    // runs MUST cover `sourceDir` — the directory that actually receives
+    // the writes — not just `dir`. When `--source` differs from `--dir`
+    // (e.g. migrating a sibling source tree) locking only `dir` left the
+    // real writes unserialised. We lock `sourceDir`; when `dir` differs we
+    // also lock `dir` (it owns the `tpm.lock` we read) and acquire both in
+    // a deterministic path order so two concurrent runs can never deadlock
+    // ABBA. Dry-run mode (no --apply) is read-only and stays lock-free.
+    std::error_code lockEc;
+    fs::path dirLockPath = projectLockPath(dir);
+    fs::path srcLockPath = projectLockPath(sourceDir);
+    bool sameLock = fs::equivalent(dir, sourceDir, lockEc) ||
+                    dirLockPath == srcLockPath;
+    // Order the two lock paths so every caller takes them in the same
+    // sequence (string order is a total order over the path strings).
+    std::vector<fs::path> lockOrder;
+    if (sameLock) {
+        lockOrder.push_back(srcLockPath);
+    } else if (dirLockPath.string() < srcLockPath.string()) {
+        lockOrder.push_back(dirLockPath);
+        lockOrder.push_back(srcLockPath);
+    } else {
+        lockOrder.push_back(srcLockPath);
+        lockOrder.push_back(dirLockPath);
+    }
+    std::vector<std::unique_ptr<::topo::platform::FileLock>> heldLocks;
+    if (apply) {
+        for (const auto& lp : lockOrder) {
+            auto lock = std::make_unique<::topo::platform::FileLock>(lp);
+            if (!acquireProjectLock(*lock)) return 1;
+            heldLocks.push_back(std::move(lock));
+        }
+    }
 
     if (pkgName.empty() || toVersion.empty()) {
         std::cerr << "error: tpm migrate requires --package <ns/name> and "

@@ -202,6 +202,78 @@ namespace orders {
         << res.rewrittenSource;
 }
 
+// ── regression: two rules matching the same record → overlapping edits ──
+
+TEST(MigrationEngine, OverlappingEditsFromTwoRulesAreRejected) {
+    // Two handler rules both anchor on `id` and both match the SAME record
+    // span, each queuing a rewrite over the identical `record<...>` byte
+    // range. Applying both edits right-to-left would corrupt the rewrite
+    // (the second `replace` lands inside text the first already rewrote).
+    // applyEdits must detect the overlap and the engine must refuse the
+    // migration as a hard error rather than emit a mangled `.topo`.
+    const char* kOne = R"topo(
+namespace orders {
+  public:
+    handler validate(record<id: i64, amount: f64> o) -> bool;
+}
+)topo";
+
+    MigrationRule r1 = makeRule(MigrationKind::Handler, "orders::validate");
+    FieldChange a1; a1.op = FieldChange::Op::Retype; a1.field = "id";
+    a1.type = "i32";
+    r1.fieldChanges.push_back(a1);
+
+    MigrationRule r2 = makeRule(MigrationKind::Handler, "orders::validate");
+    FieldChange a2; a2.op = FieldChange::Op::Retype; a2.field = "id";
+    a2.type = "i16";
+    r2.fieldChanges.push_back(a2);
+
+    MigrationRuleSet rules;
+    rules.rules.push_back(r1);
+    rules.rules.push_back(r2);
+
+    MigrationEngine engine;
+    auto res = engine.migrateSource("consumer.topo", kOne, rules);
+
+    EXPECT_FALSE(res.ok)
+        << "two rules editing the same record span must be a hard error";
+    EXPECT_NE(res.error.find("overlapping"), std::string::npos)
+        << "the error must name the overlapping-edit cause; got: "
+        << res.error;
+    // Nothing was committed: the source is unchanged and no Auto entry
+    // survives claiming a landed edit.
+    EXPECT_FALSE(res.changed);
+    EXPECT_EQ(res.rewrittenSource, kOne);
+    for (const auto& e : res.report)
+        EXPECT_NE(e.outcome, MigrationReportEntry::Outcome::Auto)
+            << "no report entry may claim Auto after an overlap reject";
+}
+
+TEST(MigrationEngine, SingleRuleStillRewritesAfterOverlapGuard) {
+    // Guard against over-rejection: a lone rule matching one record must
+    // still auto-rewrite — the overlap guard only fires on genuine
+    // intersecting spans, never on a single non-overlapping edit.
+    const char* kOne = R"topo(
+namespace orders {
+  public:
+    handler validate(record<id: i64, amount: f64> o) -> bool;
+}
+)topo";
+    MigrationRule r = makeRule(MigrationKind::Handler, "orders::validate");
+    FieldChange fc; fc.op = FieldChange::Op::Retype; fc.field = "id";
+    fc.type = "i32";
+    r.fieldChanges.push_back(fc);
+    MigrationRuleSet rules;
+    rules.rules.push_back(r);
+
+    MigrationEngine engine;
+    auto res = engine.migrateSource("consumer.topo", kOne, rules);
+    ASSERT_TRUE(res.ok) << res.error;
+    EXPECT_TRUE(res.changed);
+    EXPECT_TRUE(res.allAuto());
+    EXPECT_NE(res.rewrittenSource.find("id: i32"), std::string::npos);
+}
+
 // ── operation-fn / pipeline-flow paths — manual in this MVP ─────────────
 //
 // The MVP engine does not land token edits for these paths; per the

@@ -98,11 +98,36 @@ struct TextEdit {
 
 /// Apply a set of non-overlapping edits to `source`, right-to-left so
 /// earlier offsets stay valid.
-std::string applyEdits(const std::string& source, std::vector<TextEdit> edits) {
+///
+/// `overlap` is set true when two edits target intersecting byte ranges —
+/// e.g. two handler rules that both match the same `record<...>` span and
+/// each queue a rewrite of it. Applying overlapping edits right-to-left
+/// silently corrupts the output (the second `replace` lands inside text the
+/// first one already rewrote, or shifts offsets the first relied on), so the
+/// caller MUST treat `overlap == true` as a hard error and discard the
+/// rewrite rather than commit a mangled file. Two edits that merely abut
+/// (one's `end` equals the next's `begin`) do not overlap and are allowed.
+std::string applyEdits(const std::string& source, std::vector<TextEdit> edits,
+                       bool& overlap) {
+    overlap = false;
     std::sort(edits.begin(), edits.end(),
               [](const TextEdit& a, const TextEdit& b) {
                   return a.begin > b.begin;
               });
+    // After the descending-by-begin sort, each edit's range must end at or
+    // before the previously seen (higher-offset) edit's begin. A strict
+    // overlap (`end > prevBegin`) means two edits contend for the same bytes.
+    bool havePrev = false;
+    size_t prevBegin = 0;
+    for (const auto& e : edits) {
+        if (e.begin > e.end) continue; // malformed span, skipped below too
+        if (havePrev && e.end > prevBegin) {
+            overlap = true;
+            return source; // refuse to corrupt; caller turns this into an error
+        }
+        havePrev = true;
+        prevBegin = e.begin;
+    }
     std::string out = source;
     for (const auto& e : edits) {
         if (e.begin > out.size() || e.end > out.size() || e.begin > e.end)
@@ -540,9 +565,6 @@ MigrationResult MigrationEngine::migrateSource(
 
     // Land the auto edits and re-verify under the dual-contract verifier.
     if (!edits.empty()) {
-        result.rewrittenSource = applyEdits(source, edits);
-        result.changed = (result.rewrittenSource != source);
-
         // Audit fix for inconsistent report on rewrite parse failure:
         // both post-rewrite failure paths must downgrade
         // any Auto report entries to Manual. The two paths share user-
@@ -562,6 +584,25 @@ MigrationResult MigrationEngine::migrateSource(
             result.rewrittenSource = source;
             result.changed = false;
         };
+
+        bool overlap = false;
+        result.rewrittenSource = applyEdits(source, edits, overlap);
+        result.changed = (result.rewrittenSource != source);
+        if (overlap) {
+            // Two rules queued edits over intersecting byte ranges (e.g. two
+            // handler rules both matching the same record). Committing them
+            // right-to-left would corrupt the rewrite, so refuse the whole
+            // migration rather than write a mangled `.topo`.
+            result.ok = false;
+            result.error =
+                sourcePath +
+                ": migration rules produced overlapping text edits over the "
+                "same span; the rule set is ambiguous and was not applied";
+            holdBackAutoEntries(
+                "held back: overlapping edits from two rules targeting the "
+                "same span (ambiguous rule set)");
+            return result;
+        }
 
         bool afterOk = false;
         topo::SymbolTable afterTable =

@@ -22,6 +22,7 @@ add_executable(tpm-tests
     unit/DualContractVerifierTest.cpp
     unit/PathTraversalRegressionTest.cpp
     unit/FileLockConcurrencyTest.cpp
+    unit/CommandsTest.cpp
     unit/SemVerTest.cpp
 )
 target_link_libraries(tpm-tests PRIVATE
