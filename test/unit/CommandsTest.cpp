@@ -174,7 +174,9 @@ TEST_F(CommandsFixture, InstallFromGuardChecksTheRealDestNotADoubledPath) {
         << "the old composition must NOT equal the real dest (it validated "
            "a doubled .topo-pkgs/.topo-pkgs path); if these now match the "
            "test no longer pins the residual";
-    EXPECT_NE(oldResult->string().find(".topo-pkgs/.topo-pkgs"),
+    // generic_string() so the forward-slash probe matches on Windows too
+    // (native string() would use '\\' and never contain ".topo-pkgs/.topo-pkgs").
+    EXPECT_NE(oldResult->generic_string().find(".topo-pkgs/.topo-pkgs"),
               std::string::npos)
         << "the old composition's resolved path should carry the doubled "
            "cache-root segment that proves the wrong-string bug; got "
