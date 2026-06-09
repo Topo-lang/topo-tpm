@@ -420,6 +420,42 @@ int cmdInit(const std::vector<std::string>& args) {
         m.kind = *k;
     } // else defaults to declaration
 
+    // Optional adapter pair: --adapter-from <lib> --adapter-to <lib>
+    // [--adapter-langs <l1,l2>] writes an [[adapters]] entry and scaffolds
+    // adapters/. Only valid on a declaration-bearing kind (package-format
+    // §1.2); --adapter-langs defaults to cpp (the primary cpp→cpp scenario).
+    {
+        std::string adFrom = flag(args, "--adapter-from");
+        std::string adTo = flag(args, "--adapter-to");
+        std::string adLangs = flag(args, "--adapter-langs");
+        if (!adFrom.empty() || !adTo.empty() || !adLangs.empty()) {
+            if (adFrom.empty() || adTo.empty()) {
+                std::cerr << "error: --adapter-from and --adapter-to are both "
+                             "required to declare an adapter pair\n";
+                return 1;
+            }
+            if (!isDeclarationBearingKind(m.kind)) {
+                std::cerr << "error: [[adapters]] is only valid on a "
+                             "declaration-bearing kind (declaration / "
+                             "stdlib-type / kernel), not '"
+                          << kindToString(m.kind) << "'\n";
+                return 1;
+            }
+            AdapterPair ap;
+            ap.fromLibrary = adFrom;
+            ap.toLibrary = adTo;
+            if (adLangs.empty()) {
+                ap.languages.push_back("cpp");
+            } else {
+                std::stringstream ls(adLangs);
+                std::string tok;
+                while (std::getline(ls, tok, ','))
+                    if (!tok.empty()) ap.languages.push_back(tok);
+            }
+            m.adapters.push_back(std::move(ap));
+        }
+    }
+
     if (!writeFile(mpath, m.toToml())) {
         std::cerr << "error: failed to write " << mpath
                   << " (no changes made)\n";
@@ -435,6 +471,15 @@ int cmdInit(const std::vector<std::string>& args) {
             std::ofstream(d / ".gitkeep");
             std::cout << "created " << d.string() << "/\n";
         }
+    }
+
+    // Scaffold adapters/ when an adapter pair was declared (content-conditional
+    // directory — package-format §1.4).
+    if (!m.adapters.empty()) {
+        fs::path d = fs::path(dir) / "adapters";
+        fs::create_directories(d);
+        std::ofstream(d / ".gitkeep");
+        std::cout << "created " << d.string() << "/\n";
     }
 
     std::cout << "\nPackage '" << m.name << "' (" << kindToString(m.kind)
@@ -822,15 +867,36 @@ int cmdVerify(const std::vector<std::string>& args) {
     // Manifest schema.
     for (auto& p : m.validate()) hardFailures.push_back("manifest: " + p);
 
-    // kind-required directories present and non-empty.
+    // kind-required directories present and non-empty. A stdlib-type package
+    // may carry its type-entry data under types/ instead of declarations/
+    // (package-format §1.4).
     for (const auto& rule : kDirRules) {
-        if (dirRequired(rule, m.kind)) {
-            fs::path d = fs::path(dir) / rule.name;
-            if (!dirNonEmpty(d))
-                hardFailures.push_back(
-                    std::string("kind '") + kindToString(m.kind) +
-                    "' requires a non-empty '" + rule.name + "/' directory");
-        }
+        if (!dirRequired(rule, m.kind)) continue;
+        fs::path d = fs::path(dir) / rule.name;
+        bool ok = dirNonEmpty(d);
+        bool stdlibDecls = (m.kind == PackageKind::StdlibType &&
+                            std::string(rule.name) == "declarations");
+        if (!ok && stdlibDecls)
+            ok = dirNonEmpty(fs::path(dir) / "types");
+        if (!ok)
+            hardFailures.push_back(
+                std::string("kind '") + kindToString(m.kind) +
+                "' requires a non-empty '" + rule.name + "/' directory" +
+                (stdlibDecls ? " (or 'types/')" : ""));
+    }
+
+    // adapters/ is content-conditional: required non-empty iff [[adapters]] is
+    // declared (package-format §1.4). The pair-level checks ([[adapters]] only
+    // on a declaration-bearing kind, every pair well-formed) live in
+    // Manifest::validate() above; here we gate only on the directory.
+    if (!m.adapters.empty()) {
+        if (!dirNonEmpty(fs::path(dir) / "adapters"))
+            hardFailures.push_back(
+                "[[adapters]] is declared but 'adapters/' is missing or empty "
+                "(it must hold the leaf-adapter manifests)");
+    } else if (dirNonEmpty(fs::path(dir) / "adapters")) {
+        warnings.push_back("'adapters/' is non-empty but no [[adapters]] pairs "
+                           "are declared in tpm.toml");
     }
 
     // tpm.lock consistency: every locked package's content hash still matches.

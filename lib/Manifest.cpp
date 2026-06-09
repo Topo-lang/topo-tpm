@@ -34,7 +34,20 @@ const char* kindToString(PackageKind kind) {
     return "declaration";
 }
 
+bool isDeclarationBearingKind(PackageKind kind) {
+    return kind == PackageKind::Declaration ||
+           kind == PackageKind::StdlibType ||
+           kind == PackageKind::Kernel;
+}
+
 namespace {
+
+/// A host-language name accepted in `[[adapters]].languages` (matches the
+/// HostLanguage set in topo-core).
+bool isHostLanguage(const std::string& s) {
+    return s == "cpp" || s == "rust" || s == "java" || s == "python" ||
+           s == "typescript";
+}
 
 bool isKebabSegment(const std::string& s) {
     if (s.empty()) return false;
@@ -158,6 +171,30 @@ std::optional<Manifest> Manifest::load(const std::string& path, std::string& err
                 }
             }
             m.bindings.push_back(std::move(b));
+        }
+    }
+
+    // [[adapters]] — array of tables, each a library/API adaptation pair.
+    if (const toml::array* arr = tbl["adapters"].as_array()) {
+        for (const auto& el : *arr) {
+            const toml::table* at = el.as_table();
+            if (!at) {
+                error = "tpm.toml: [[adapters]] entries must be tables";
+                return std::nullopt;
+            }
+            AdapterPair ap;
+            ap.fromLibrary = str(*at, "from_library");
+            ap.toLibrary = str(*at, "to_library");
+            if (const toml::array* langs = (*at)["languages"].as_array()) {
+                for (const auto& le : *langs)
+                    if (auto s = le.value<std::string>())
+                        ap.languages.push_back(*s);
+            } else if (at->contains("languages")) {
+                error = "tpm.toml: [[adapters]].languages must be an array of "
+                        "strings";
+                return std::nullopt;
+            }
+            m.adapters.push_back(std::move(ap));
         }
     }
 
@@ -294,6 +331,32 @@ std::vector<std::string> Manifest::validate() const {
         }
     }
 
+    // [[adapters]] — each pair needs a non-empty source/target library and at
+    // least one valid host language; the section is accepted only on a
+    // declaration-bearing kind (package-format §1.2/§1.4).
+    for (const auto& ap : adapters) {
+        std::string pairName =
+            "'" + ap.fromLibrary + "' → '" + ap.toLibrary + "'";
+        if (ap.fromLibrary.empty())
+            problems.push_back("[[adapters]] entry has an empty 'from_library'");
+        if (ap.toLibrary.empty())
+            problems.push_back("[[adapters]] entry has an empty 'to_library'");
+        if (ap.languages.empty())
+            problems.push_back("[[adapters]] entry " + pairName +
+                               " has no 'languages' (need ≥1)");
+        for (const auto& l : ap.languages)
+            if (!isHostLanguage(l))
+                problems.push_back("[[adapters]] entry " + pairName +
+                                   " has invalid language '" + l +
+                                   "' (expected cpp / rust / java / python / "
+                                   "typescript)");
+    }
+    if (!adapters.empty() && !isDeclarationBearingKind(kind))
+        problems.push_back(
+            std::string("[[adapters]] is only valid on a declaration-bearing "
+                        "kind (declaration / stdlib-type / kernel), not '") +
+            kindToString(kind) + "'");
+
     return problems;
 }
 
@@ -341,6 +404,18 @@ std::string Manifest::toToml() const {
                 os << ", version = \"" << b.version << '"';
             os << " }\n";
         }
+    }
+
+    for (const auto& ap : adapters) {
+        os << "\n[[adapters]]\n";
+        os << "from_library = \"" << ap.fromLibrary << "\"\n";
+        os << "to_library = \"" << ap.toLibrary << "\"\n";
+        os << "languages = [";
+        for (size_t i = 0; i < ap.languages.size(); ++i) {
+            if (i) os << ", ";
+            os << '"' << ap.languages[i] << '"';
+        }
+        os << "]\n";
     }
 
     return os.str();

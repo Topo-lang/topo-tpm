@@ -24,6 +24,7 @@ add_executable(tpm-tests
     unit/FileLockConcurrencyTest.cpp
     unit/CommandsTest.cpp
     unit/SemVerTest.cpp
+    unit/AdapterManifestTest.cpp
 )
 target_link_libraries(tpm-tests PRIVATE
     TpmLib

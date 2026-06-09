@@ -194,3 +194,118 @@ TEST_F(TpmCliFixture, PublishOnLocalPackageRunsVerifyFirstAndStubsOut) {
     EXPECT_NE(r.stderrOutput.find("STUB"), std::string::npos)
         << "publish must announce its stub status:\n" << r.stderrOutput;
 }
+
+// ── tpm init --adapter-* + tpm verify (adapter content model) ──────
+
+namespace {
+// Drop a non-.gitkeep file into <pkg>/<sub>/ so the directory counts as
+// non-empty for `tpm verify` (which ignores the .gitkeep placeholder).
+void putContent(const fs::path& pkg, const std::string& sub,
+                const std::string& file, const std::string& body) {
+    fs::path d = pkg / sub;
+    fs::create_directories(d);
+    std::ofstream(d / file) << body;
+}
+} // namespace
+
+TEST_F(TpmCliFixture, InitWithAdapterPairScaffoldsAndVerifyPasses) {
+    fs::path pkg = tmp / "bridge-pkg";
+
+    auto init = runTpm({"init",
+                        "--dir", pkg.string(),
+                        "--name", "my-org/asio-bridge",
+                        "--version", "0.1.0",
+                        "--license", "MIT",
+                        "--kind", "declaration",
+                        "--adapter-from", "fmt",
+                        "--adapter-to", "std-format",
+                        "--adapter-langs", "cpp"});
+    ASSERT_EQ(init.exitCode, 0)
+        << "init with an adapter pair failed:\nstdout:\n" << init.stdoutOutput
+        << "\nstderr:\n" << init.stderrOutput;
+    EXPECT_TRUE(fs::is_directory(pkg / "adapters"))
+        << "init must scaffold adapters/ when a pair is declared";
+
+    // The manifest must carry the [[adapters]] entry.
+    std::ifstream mf(pkg / "tpm.toml");
+    std::stringstream ss;
+    ss << mf.rdbuf();
+    std::string toml = ss.str();
+    EXPECT_NE(toml.find("[[adapters]]"), std::string::npos) << toml;
+    EXPECT_NE(toml.find("from_library = \"fmt\""), std::string::npos) << toml;
+    EXPECT_NE(toml.find("to_library = \"std-format\""), std::string::npos) << toml;
+
+    // Real content so verify's non-empty checks pass (init writes only a
+    // .gitkeep, which verify treats as empty).
+    putContent(pkg, "declarations", "bridge.topo", "namespace b {}\n");
+    putContent(pkg, "adapters", "fmt.adapter.json", "[]\n");
+
+    auto verify = runTpm({"verify", "--dir", pkg.string()});
+    EXPECT_EQ(verify.exitCode, 0)
+        << "verify on a well-formed adapter package failed:\nstdout:\n"
+        << verify.stdoutOutput << "\nstderr:\n" << verify.stderrOutput;
+}
+
+TEST_F(TpmCliFixture, VerifyFailsWhenAdaptersDeclaredButDirEmpty) {
+    fs::path pkg = tmp / "empty-adapters-pkg";
+
+    auto init = runTpm({"init",
+                        "--dir", pkg.string(),
+                        "--name", "my-org/asio-bridge",
+                        "--version", "0.1.0",
+                        "--license", "MIT",
+                        "--kind", "declaration",
+                        "--adapter-from", "fmt",
+                        "--adapter-to", "std-format"});
+    ASSERT_EQ(init.exitCode, 0) << init.stderrOutput;
+
+    // Satisfy declarations/ but leave adapters/ holding only .gitkeep.
+    putContent(pkg, "declarations", "bridge.topo", "namespace b {}\n");
+
+    auto verify = runTpm({"verify", "--dir", pkg.string()});
+    EXPECT_NE(verify.exitCode, 0)
+        << "verify must fail when [[adapters]] is declared but adapters/ is empty";
+    EXPECT_NE(verify.stderrOutput.find("adapters/"), std::string::npos)
+        << "the failure must name adapters/:\n" << verify.stderrOutput;
+}
+
+TEST_F(TpmCliFixture, InitAdapterOnLayoutKindRejected) {
+    fs::path pkg = tmp / "layout-adapter-pkg";
+
+    auto init = runTpm({"init",
+                        "--dir", pkg.string(),
+                        "--name", "my-org/layout-pkg",
+                        "--kind", "layout",
+                        "--adapter-from", "a",
+                        "--adapter-to", "b"});
+    EXPECT_NE(init.exitCode, 0)
+        << "[[adapters]] on a layout kind must be rejected by init";
+    EXPECT_NE(init.stderrOutput.find("declaration-bearing"), std::string::npos)
+        << "rejection must explain the declaration-bearing constraint:\n"
+        << init.stderrOutput;
+    // And it must not have written a tpm.toml on the rejected path.
+    EXPECT_FALSE(fs::is_regular_file(pkg / "tpm.toml"))
+        << "a rejected init must not leave a manifest behind";
+}
+
+TEST_F(TpmCliFixture, StdlibTypeAcceptsTypesDirInLieuOfDeclarations) {
+    // package-format §1.4: a stdlib-type package satisfies its required
+    // declaration content with a non-empty types/ OR declarations/.
+    fs::path pkg = tmp / "stdlib-types-pkg";
+    auto init = runTpm({"init",
+                        "--dir", pkg.string(),
+                        "--name", "topo-std/core",
+                        "--version", "0.1.0",
+                        "--license", "MIT",
+                        "--kind", "stdlib-type"});
+    ASSERT_EQ(init.exitCode, 0) << init.stderrOutput;
+
+    // init scaffolds declarations/ (with only a .gitkeep → empty). Satisfy the
+    // requirement via a non-empty types/ instead, leaving declarations/ empty.
+    putContent(pkg, "types", "i64.toml", "keyword = \"i64\"\n");
+
+    auto verify = runTpm({"verify", "--dir", pkg.string()});
+    EXPECT_EQ(verify.exitCode, 0)
+        << "stdlib-type must accept a non-empty types/ in lieu of declarations/:\n"
+        << verify.stdoutOutput << "\nstderr:\n" << verify.stderrOutput;
+}

@@ -19,6 +19,12 @@ enum class PackageKind { Declaration, Layout, EventProtocol, StdlibType, Kernel,
 std::optional<PackageKind> parseKind(const std::string& text);
 const char* kindToString(PackageKind kind);
 
+/// Whether `kind` carries `.topo` declarations whose leaves can be adapted —
+/// the kinds on which `[[adapters]]` and an `adapters/` directory are
+/// accepted (package-format spec §1.4). `layout` / `event-protocol` carry no
+/// declarations and reject `[[adapters]]`.
+bool isDeclarationBearingKind(PackageKind kind);
+
 /// Validate a per-dependency `registry` URL before it is handed to `git`
 /// as a positional argument. Blocks the git argument-injection class
 /// (CVE-2017-1000117): values that begin with `-` (interpreted by git as
@@ -52,6 +58,18 @@ struct Binding {
     std::string version;         // optional
 };
 
+/// One [[adapters]] entry — a library/API scenario-adaptation pair this
+/// package provides. The varying axis is the library/API, not the language:
+/// the source and target language are the same (cpp→cpp is the norm). See
+/// package-format spec §1.2. The leaf-adapter manifests that realize the
+/// pair live under the package's `adapters/` directory; the condition model
+/// that selects *when* a pair applies is a separate design (not here).
+struct AdapterPair {
+    std::string fromLibrary;             // source library adapted away from
+    std::string toLibrary;               // target library adapted to
+    std::vector<std::string> languages;  // host language(s); ≥1, same-language ok
+};
+
 /// Parsed `tpm.toml`.
 struct Manifest {
     // [package]
@@ -71,6 +89,11 @@ struct Manifest {
 
     std::vector<Dependency> dependencies;
     std::vector<Binding> bindings;
+    /// [[adapters]] — the library/API scenario-adaptation pairs this package
+    /// provides (package-format §1.2). When non-empty the package must carry
+    /// a non-empty `adapters/` directory and `kind` must be
+    /// declaration-bearing; `validate()` / `tpm verify` enforce both.
+    std::vector<AdapterPair> adapters;
 
     /// Load and parse a tpm.toml file. On failure, returns nullopt and fills
     /// `error` with a human-readable reason.
