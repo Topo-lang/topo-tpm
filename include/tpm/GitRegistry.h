@@ -41,6 +41,12 @@ public:
     /// shallow clone. Returns true on success; on failure fills `error`.
     bool fetchInto(const std::string& repoUrl, const std::string& tag,
                    const std::string& destDir, std::string& error) const;
+
+    /// HEAD commit SHA of a cloned working tree (empty string on failure).
+    /// Used to enforce the locked `revision` pin after fetchInto: a tag
+    /// force-pushed between resolve and install must be detected, not
+    /// silently installed.
+    std::string headRevision(const std::string& repoDir) const;
 };
 
 } // namespace tpm

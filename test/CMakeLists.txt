@@ -23,6 +23,7 @@ add_executable(tpm-tests
     unit/PathTraversalRegressionTest.cpp
     unit/FileLockConcurrencyTest.cpp
     unit/CommandsTest.cpp
+    unit/InstallIntegrityTest.cpp
     unit/SemVerTest.cpp
     unit/AdapterManifestTest.cpp
 )

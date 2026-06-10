@@ -118,4 +118,14 @@ bool GitRegistry::fetchInto(const std::string& repoUrl, const std::string& tag,
     return true;
 }
 
+std::string GitRegistry::headRevision(const std::string& repoDir) const {
+    auto r = topo::platform::runProcessCapture(
+        "git", {"-C", repoDir, "rev-parse", "HEAD"});
+    if (r.exitCode != 0) return "";
+    std::string sha = r.stdoutOutput;
+    while (!sha.empty() && (sha.back() == '\n' || sha.back() == '\r'))
+        sha.pop_back();
+    return sha;
+}
+
 } // namespace tpm

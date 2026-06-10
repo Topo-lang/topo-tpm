@@ -215,10 +215,24 @@ TEST(RegistryArgInjectionRegression, LegitimateUrlsAccepted) {
     EXPECT_TRUE(validateRegistryUrl("https://github.com/acme/widget.git").empty());
     EXPECT_TRUE(validateRegistryUrl("git+https://github.com/acme/widget.git").empty());
     EXPECT_TRUE(validateRegistryUrl("ssh://git@example.com/acme/widget.git").empty());
-    EXPECT_TRUE(validateRegistryUrl("git://example.com/acme/widget.git").empty());
     EXPECT_TRUE(validateRegistryUrl("file:///srv/git/widget.git").empty());
     // scp-like syntax.
     EXPECT_TRUE(validateRegistryUrl("git@github.com:acme/widget.git").empty());
+}
+
+TEST(RegistryArgInjectionRegression, CleartextTransportsRejected) {
+    // http:// and git:// move package bytes in cleartext; with TOFU
+    // semantics a single on-path substitution becomes the recorded truth,
+    // so both are refused outright (no consumers exist yet to break).
+    std::string httpErr =
+        validateRegistryUrl("http://example.com/acme/widget.git");
+    EXPECT_FALSE(httpErr.empty());
+    EXPECT_NE(httpErr.find("cleartext"), std::string::npos) << httpErr;
+
+    std::string gitErr =
+        validateRegistryUrl("git://example.com/acme/widget.git");
+    EXPECT_FALSE(gitErr.empty());
+    EXPECT_NE(gitErr.find("cleartext"), std::string::npos) << gitErr;
 }
 
 TEST(RegistryArgInjectionRegression, MaliciousRegistrySurfacedByValidate) {

@@ -28,6 +28,31 @@ namespace fs = std::filesystem;
 namespace tpm {
 namespace {
 
+// fs::remove_all, but reliable on git-produced trees under Windows: git
+// writes object files read-only, and Windows refuses to delete a read-only
+// file (POSIX unlink only needs a writable parent dir), so a plain
+// remove_all leaves the .git tree behind — a stale-dir clear then makes the
+// subsequent `git clone` fail, and a security cleanup silently keeps the
+// content it promised to drop. Clear the read-only bit first, then remove.
+// Returns the final remove_all error code (success when nothing exists).
+std::error_code removeTreeForce(const fs::path& p) {
+    std::error_code ec;
+    if (!fs::exists(p, ec)) return {};
+#ifdef _WIN32
+    std::error_code iterEc;
+    for (auto it = fs::recursive_directory_iterator(
+             p, fs::directory_options::skip_permission_denied, iterEc);
+         it != fs::recursive_directory_iterator(); it.increment(iterEc)) {
+        if (iterEc) break;
+        std::error_code permEc;
+        fs::permissions(it->path(), fs::perms::owner_write,
+                        fs::perm_options::add, permEc);
+    }
+#endif
+    fs::remove_all(p, ec);
+    return ec;
+}
+
 // ── kind → directory layout ─────────────────────────────────────────────
 
 // PackageKind has 5 real values plus `Count` sentinel; the array width
@@ -244,7 +269,11 @@ bool resolveDependencies(const Manifest& manifest, Lock& lock,
         lp.version = resolved->version.toString();
         lp.source = repoUrl + "#" + resolved->tag;
         lp.revision = resolved->revision;
-        lp.contentHash = ""; // filled at install time once content is on disk
+        // Publisher-pinned hash when the manifest carries one — the FIRST
+        // install then verifies against declared intent instead of trusting
+        // whatever the server happened to deliver. Empty → recorded at
+        // install time (trust-on-first-use), as before.
+        lp.contentHash = dep.contentHash;
         fresh.packages.push_back(std::move(lp));
     }
     lock = std::move(fresh);
@@ -301,12 +330,30 @@ bool installLocked(Lock& lock, const Cache& cache, std::string& error) {
 
             fs::create_directories(fs::path(dest).parent_path());
             // git clone refuses a non-empty destination; clear a stale dir.
-            std::error_code ec;
-            fs::remove_all(dest, ec);
+            removeTreeForce(dest);
 
             std::cout << "  fetching " << lp.name << " " << lp.version
                       << " from " << repoUrl << " @ " << tag << "\n";
             if (!registry.fetchInto(repoUrl, tag, dest, error)) return false;
+
+            // Enforce the revision pin. The lock records the commit the tag
+            // pointed at when it was resolved; a tag force-pushed since then
+            // delivers different content under the same name and must fail
+            // loudly, not install silently (package-format §lock: "revision
+            // pins past tag re-pointing" — enforced here, not just recorded).
+            if (!lp.revision.empty()) {
+                std::string head = registry.headRevision(dest);
+                if (head != lp.revision) {
+                    removeTreeForce(dest); // don't leave unverified content cached
+                    error = "revision mismatch for '" + lp.name + "' " +
+                            lp.version + " (tag '" + tag +
+                            "' was re-pointed since the lock was written)\n" +
+                            "  locked  " + lp.revision + "\n  fetched " +
+                            (head.empty() ? "<unreadable>" : head) +
+                            "\n  Re-run resolution if the re-point is intentional.";
+                    return false;
+                }
+            }
         } else {
             std::cout << "  cached   " << lp.name << " " << lp.version << "\n";
         }
@@ -744,7 +791,7 @@ int cmdInstall(const std::vector<std::string>& args) {
         tmpDest += ".install.tmp";
 
         std::error_code ec;
-        fs::remove_all(tmpDest, ec);
+        removeTreeForce(tmpDest);
         fs::create_directories(destPath.parent_path(), ec);
         // Audit: untrusted source directory enabling path traversal.
         // without ``copy_symlinks`` ``fs::copy`` dereferences source
@@ -763,8 +810,7 @@ int cmdInstall(const std::vector<std::string>& args) {
             // Roll back: remove the half-populated temp tree so a
             // re-run starts clean. Errors here are not fatal — the
             // user is already being told the install failed.
-            std::error_code cleanupEc;
-            fs::remove_all(tmpDest, cleanupEc);
+            removeTreeForce(tmpDest);
             return 1;
         }
 
@@ -773,12 +819,13 @@ int cmdInstall(const std::vector<std::string>& args) {
         // in its prior state. We cannot use ``fs::rename`` directly to
         // overlay a non-empty destination, so the prior cached version
         // is removed in a separate step under the parent directory.
-        fs::remove_all(destPath, ec);
+        // (Force-removal matters here: the prior entry may be a git
+        // clone whose read-only objects Windows refuses to delete.)
+        ec = removeTreeForce(destPath);
         if (ec) {
             std::cerr << "error: failed to remove prior cache entry "
                       << destPath.string() << ": " << ec.message() << "\n";
-            std::error_code cleanupEc;
-            fs::remove_all(tmpDest, cleanupEc);
+            removeTreeForce(tmpDest);
             return 1;
         }
         fs::rename(tmpDest, destPath, ec);
@@ -786,8 +833,7 @@ int cmdInstall(const std::vector<std::string>& args) {
             std::cerr << "error: failed to finalise install (rename "
                       << tmpDest.string() << " -> " << destPath.string()
                       << "): " << ec.message() << "\n";
-            std::error_code cleanupEc;
-            fs::remove_all(tmpDest, cleanupEc);
+            removeTreeForce(tmpDest);
             return 1;
         }
 
