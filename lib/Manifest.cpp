@@ -143,6 +143,7 @@ std::optional<Manifest> Manifest::load(const std::string& path, std::string& err
             } else if (const toml::table* dt = node.as_table()) {
                 dep.versionReq = str(*dt, "version");
                 dep.registry = str(*dt, "registry");
+                dep.contentHash = str(*dt, "content_hash");
             } else {
                 error = "tpm.toml: dependency '" + dep.name +
                         "' must be a version string or a table";
@@ -230,9 +231,19 @@ std::string validateRegistryUrl(const std::string& raw) {
             return "registry URL '" + raw + "' uses the disallowed '" +
                    std::string(bad) + "' git transport";
 
-    // Allow-listed URL schemes.
-    for (const char* scheme : {"https://", "http://", "ssh://", "git://",
-                               "file://"})
+    // Cleartext transports — rejected: an on-path attacker can substitute
+    // package content wholesale, and with trust-on-first-use semantics the
+    // substituted content would be recorded as the truth. tpm has no
+    // consumers yet, so the strict default is free today; an opt-in escape
+    // hatch can be added if a real intranet-registry need appears.
+    for (const char* clear : {"http://", "git://"})
+        if (startsWithCI(clear))
+            return "registry URL '" + raw + "' uses cleartext '" +
+                   std::string(clear) +
+                   "'; use https:// (or ssh:// / file://) instead";
+
+    // Allow-listed URL schemes (TLS, SSH, or local).
+    for (const char* scheme : {"https://", "ssh://", "file://"})
         if (startsWithCI(scheme)) return "";
 
     // scp-like syntax: user@host:path — require the '@' (matching the
@@ -246,7 +257,7 @@ std::string validateRegistryUrl(const std::string& raw) {
         return "";
 
     return "registry URL '" + raw +
-           "' has no allow-listed scheme (https://, ssh://, git://, file://, "
+           "' has no allow-listed scheme (https://, ssh://, file://, "
            "or user@host:path)";
 }
 
@@ -386,11 +397,15 @@ std::string Manifest::toToml() const {
         os << "\n[dependencies]\n";
         for (const auto& dep : dependencies) {
             os << '"' << dep.name << "\" = ";
-            if (dep.registry.empty()) {
+            if (dep.registry.empty() && dep.contentHash.empty()) {
                 os << '"' << dep.versionReq << "\"\n";
             } else {
-                os << "{ version = \"" << dep.versionReq
-                   << "\", registry = \"" << dep.registry << "\" }\n";
+                os << "{ version = \"" << dep.versionReq << "\"";
+                if (!dep.registry.empty())
+                    os << ", registry = \"" << dep.registry << "\"";
+                if (!dep.contentHash.empty())
+                    os << ", content_hash = \"" << dep.contentHash << "\"";
+                os << " }\n";
             }
         }
     }

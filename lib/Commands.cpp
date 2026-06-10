@@ -244,7 +244,11 @@ bool resolveDependencies(const Manifest& manifest, Lock& lock,
         lp.version = resolved->version.toString();
         lp.source = repoUrl + "#" + resolved->tag;
         lp.revision = resolved->revision;
-        lp.contentHash = ""; // filled at install time once content is on disk
+        // Publisher-pinned hash when the manifest carries one — the FIRST
+        // install then verifies against declared intent instead of trusting
+        // whatever the server happened to deliver. Empty → recorded at
+        // install time (trust-on-first-use), as before.
+        lp.contentHash = dep.contentHash;
         fresh.packages.push_back(std::move(lp));
     }
     lock = std::move(fresh);
@@ -307,6 +311,26 @@ bool installLocked(Lock& lock, const Cache& cache, std::string& error) {
             std::cout << "  fetching " << lp.name << " " << lp.version
                       << " from " << repoUrl << " @ " << tag << "\n";
             if (!registry.fetchInto(repoUrl, tag, dest, error)) return false;
+
+            // Enforce the revision pin. The lock records the commit the tag
+            // pointed at when it was resolved; a tag force-pushed since then
+            // delivers different content under the same name and must fail
+            // loudly, not install silently (package-format §lock: "revision
+            // pins past tag re-pointing" — enforced here, not just recorded).
+            if (!lp.revision.empty()) {
+                std::string head = registry.headRevision(dest);
+                if (head != lp.revision) {
+                    std::error_code rmEc;
+                    fs::remove_all(dest, rmEc); // don't leave unverified content cached
+                    error = "revision mismatch for '" + lp.name + "' " +
+                            lp.version + " (tag '" + tag +
+                            "' was re-pointed since the lock was written)\n" +
+                            "  locked  " + lp.revision + "\n  fetched " +
+                            (head.empty() ? "<unreadable>" : head) +
+                            "\n  Re-run resolution if the re-point is intentional.";
+                    return false;
+                }
+            }
         } else {
             std::cout << "  cached   " << lp.name << " " << lp.version << "\n";
         }

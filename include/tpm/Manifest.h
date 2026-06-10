@@ -48,6 +48,9 @@ struct Dependency {
     std::string name;            // "<namespace>/<name>"
     std::string versionReq;      // SemVer requirement string
     std::string registry;        // optional git URL / central-registry name override
+    std::string contentHash;     // optional publisher-pinned content hash; when
+                                 // set, the FIRST install verifies against it
+                                 // instead of trust-on-first-use
 };
 
 /// One [bindings] host entry — advisory metadata only.
