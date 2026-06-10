@@ -40,6 +40,27 @@ fs::path makeUniqueTempDir(const std::string& prefix) {
     return {};
 }
 
+// fs::remove_all that also works on git trees under Windows: git writes
+// object files read-only and Windows refuses to delete read-only files, so
+// a plain remove_all silently leaves the .git tree (and with it the whole
+// cache entry) behind. Mirrors the production helper in lib/Commands.cpp.
+void removeTreeForce(const fs::path& p) {
+    std::error_code ec;
+    if (!fs::exists(p, ec)) return;
+#ifdef _WIN32
+    std::error_code iterEc;
+    for (auto it = fs::recursive_directory_iterator(
+             p, fs::directory_options::skip_permission_denied, iterEc);
+         it != fs::recursive_directory_iterator(); it.increment(iterEc)) {
+        if (iterEc) break;
+        std::error_code permEc;
+        fs::permissions(it->path(), fs::perms::owner_write,
+                        fs::perm_options::add, permEc);
+    }
+#endif
+    fs::remove_all(p, ec);
+}
+
 class InstallIntegrityFixture : public ::testing::Test {
 protected:
     fs::path tmp;
@@ -55,7 +76,7 @@ protected:
     void TearDown() override {
         std::error_code ec;
         fs::current_path(savedCwd, ec);
-        if (!tmp.empty()) fs::remove_all(tmp, ec);
+        if (!tmp.empty()) removeTreeForce(tmp);
     }
 
     void writeFile(const fs::path& path, const std::string& content) {
@@ -152,9 +173,10 @@ TEST_F(InstallIntegrityFixture, RepointedTagFailsAgainstLockedRevision) {
     git({"-C", repo.string(), "tag", "-f", "v1.0.0"});
 
     // Drop the cache so install re-fetches; the lock (with the old
-    // revision) stays.
-    std::error_code ec;
-    fs::remove_all(proj / ".topo-pkgs", ec);
+    // revision) stays. Force-removal: the cached clone's .git objects are
+    // read-only and Windows refuses them otherwise — a silently-surviving
+    // cache would short-circuit to "cached" and never reach the check.
+    removeTreeForce(proj / ".topo-pkgs");
 
     auto second = install(proj);
     EXPECT_NE(second.exitCode, 0)
@@ -199,7 +221,7 @@ TEST_F(InstallIntegrityFixture, ManifestPinnedHashMatchPassesFirstInstall) {
     ASSERT_FALSE(trueHash.empty());
 
     std::error_code ec;
-    fs::remove_all(proj / ".topo-pkgs", ec);
+    removeTreeForce(proj / ".topo-pkgs");
     fs::remove(proj / "tpm.lock", ec);
     fs::path proj2 = proj; // same dir, rewritten manifest with the pin
     writeFile(proj2 / "tpm.toml",
