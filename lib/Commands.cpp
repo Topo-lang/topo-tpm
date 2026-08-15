@@ -1132,15 +1132,26 @@ std::vector<fs::path> collectTopoFiles(const fs::path& dir) {
         if (dir.extension() == ".topo") out.push_back(dir);
         return out;
     }
-    for (const auto& e : fs::recursive_directory_iterator(dir)) {
-        if (e.is_regular_file() && e.path().extension() == ".topo") {
+    std::error_code iterEc;
+    for (auto it = fs::recursive_directory_iterator(
+             dir, fs::directory_options::skip_permission_denied, iterEc);
+         it != fs::recursive_directory_iterator(); it.increment(iterEc)) {
+        if (iterEc) {
+            // Unreadable subtree mid-walk: degrade to what we collected so
+            // far instead of letting the iterator throw and abort the CLI.
+            std::cerr << "warning: could not fully scan '" << dir
+                      << "': " << iterEc.message() << "\n";
+            break;
+        }
+        std::error_code statEc;
+        if (it->is_regular_file(statEc) && it->path().extension() == ".topo") {
             // Skip the package cache itself — it carries the *library's*
             // declarations, not the consumer's code. ``isInsideTopoPkgs``
             // checks for the segment exactly (no substring false-positives
             // such as ``my-app-.topo-pkgs-design/``) and case-insensitively
             // on case-insensitive filesystems (Windows / macOS default).
-            if (isInsideTopoPkgs(e.path(), dir)) continue;
-            out.push_back(e.path());
+            if (isInsideTopoPkgs(it->path(), dir)) continue;
+            out.push_back(it->path());
         }
     }
     std::sort(out.begin(), out.end());
